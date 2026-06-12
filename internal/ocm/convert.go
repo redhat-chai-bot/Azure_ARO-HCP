@@ -377,8 +377,6 @@ func BuildCSCluster(resourceID *azcorearm.ResourceID, tenantID string, hcpCluste
 		clusterAPIBuilder.Listening(apiListening)
 	}
 
-	updatableConfig := ClusterUpdatableConfigFromCluster(hcpCluster)
-
 	// Property layering for CS Properties(): preserve existing values (on update),
 	// overlay caller-specified properties, then applyClusterUpdatableConfig overlays
 	// updatable experimental features.
@@ -392,12 +390,13 @@ func BuildCSCluster(resourceID *azcorearm.ResourceID, tenantID string, hcpCluste
 		properties[k] = v
 	}
 
-	err = applyClusterUpdatableConfig(clusterBuilder, clusterAPIBuilder, properties, updatableConfig)
+	updatableConfig := UpdateDispatchClusterUpdatableConfigFromCluster(hcpCluster)
+	err = applyUpdateDispatchClusterUpdatableConfig(clusterBuilder, clusterAPIBuilder, properties, updatableConfig)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	clusterAutoscalerBuilder, err := applyClusterUpdatableAutoscalerConfig(updatableConfig)
+	clusterAutoscalerBuilder, err := applyUpdateDispatchClusterUpdatableAutoscalerConfig(updatableConfig)
 	if err != nil {
 		return nil, nil, err
 	}

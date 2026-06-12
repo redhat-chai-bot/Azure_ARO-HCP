@@ -36,17 +36,17 @@ func TestClusterUpdatableConfigHash(t *testing.T) {
 				AuthorizedCIDRs: []string{"10.0.0.0/8"},
 			},
 			Autoscaling: api.ClusterAutoscalingProfile{
-				MaxNodesTotal:    10,
+				MaxNodesTotal:            10,
 				MaxPodGracePeriodSeconds: 600,
 			},
 		},
 	}
 
-	hash1, err := ClusterUpdatableConfigHash(base)
+	hash1, err := UpdateDispatchClusterUpdatableConfigHash(base)
 	require.NoError(t, err)
 	require.NotEmpty(t, hash1)
 
-	hash2, err := ClusterUpdatableConfigHash(base)
+	hash2, err := UpdateDispatchClusterUpdatableConfigHash(base)
 	require.NoError(t, err)
 	assert.Equal(t, hash1, hash2)
 
@@ -57,12 +57,12 @@ func TestClusterUpdatableConfigHash(t *testing.T) {
 				AuthorizedCIDRs: []string{"10.0.0.0/8"},
 			},
 			Autoscaling: api.ClusterAutoscalingProfile{
-				MaxNodesTotal:    10,
+				MaxNodesTotal:            10,
 				MaxPodGracePeriodSeconds: 600,
 			},
 		},
 	}
-	hashDifferent, err := ClusterUpdatableConfigHash(differentDrain)
+	hashDifferent, err := UpdateDispatchClusterUpdatableConfigHash(differentDrain)
 	require.NoError(t, err)
 	assert.NotEqual(t, hash1, hashDifferent)
 
@@ -73,12 +73,12 @@ func TestClusterUpdatableConfigHash(t *testing.T) {
 				AuthorizedCIDRs: []string{"192.168.0.0/16"},
 			},
 			Autoscaling: api.ClusterAutoscalingProfile{
-				MaxNodesTotal:    10,
+				MaxNodesTotal:            10,
 				MaxPodGracePeriodSeconds: 600,
 			},
 		},
 	}
-	hashCIDRs, err := ClusterUpdatableConfigHash(differentCIDRs)
+	hashCIDRs, err := UpdateDispatchClusterUpdatableConfigHash(differentCIDRs)
 	require.NoError(t, err)
 	assert.NotEqual(t, hash1, hashCIDRs)
 
@@ -92,12 +92,12 @@ func TestClusterUpdatableConfigHash(t *testing.T) {
 				{Source: "quay.io/openshift-release-dev", Mirrors: []string{"mirror.example.com"}},
 			},
 			Autoscaling: api.ClusterAutoscalingProfile{
-				MaxNodesTotal:    10,
+				MaxNodesTotal:            10,
 				MaxPodGracePeriodSeconds: 600,
 			},
 		},
 	}
-	hashMirrors, err := ClusterUpdatableConfigHash(withMirrors)
+	hashMirrors, err := UpdateDispatchClusterUpdatableConfigHash(withMirrors)
 	require.NoError(t, err)
 	assert.NotEqual(t, hash1, hashMirrors)
 
@@ -108,12 +108,12 @@ func TestClusterUpdatableConfigHash(t *testing.T) {
 				AuthorizedCIDRs: []string{"10.0.0.0/8"},
 			},
 			Autoscaling: api.ClusterAutoscalingProfile{
-				MaxNodesTotal:    20,
+				MaxNodesTotal:            20,
 				MaxPodGracePeriodSeconds: 600,
 			},
 		},
 	}
-	hashAS, err := ClusterUpdatableConfigHash(differentAutoscaling)
+	hashAS, err := UpdateDispatchClusterUpdatableConfigHash(differentAutoscaling)
 	require.NoError(t, err)
 	assert.NotEqual(t, hash1, hashAS)
 
@@ -125,7 +125,7 @@ func TestClusterUpdatableConfigHash(t *testing.T) {
 			},
 		},
 	}
-	hashSizeOverride, err := ClusterUpdatableConfigHash(withSizeOverride)
+	hashSizeOverride, err := UpdateDispatchClusterUpdatableConfigHash(withSizeOverride)
 	require.NoError(t, err)
 	assert.NotEqual(t, hash1, hashSizeOverride)
 }
@@ -151,9 +151,9 @@ func TestClusterUpdatableConfigHashExcludesNonUpdatableFields(t *testing.T) {
 		},
 	}
 
-	hash1, err := ClusterUpdatableConfigHash(cluster1)
+	hash1, err := UpdateDispatchClusterUpdatableConfigHash(cluster1)
 	require.NoError(t, err)
-	hash2, err := ClusterUpdatableConfigHash(cluster2)
+	hash2, err := UpdateDispatchClusterUpdatableConfigHash(cluster2)
 	require.NoError(t, err)
 	assert.Equal(t, hash1, hash2)
 }
@@ -173,15 +173,15 @@ func TestClusterUpdatableConfigHashExcludesTagsWithoutExperimentalFeatures(t *te
 		},
 	}
 
-	hash1, err := ClusterUpdatableConfigHash(cluster1)
+	hash1, err := UpdateDispatchClusterUpdatableConfigHash(cluster1)
 	require.NoError(t, err)
-	hash2, err := ClusterUpdatableConfigHash(cluster2)
+	hash2, err := UpdateDispatchClusterUpdatableConfigHash(cluster2)
 	require.NoError(t, err)
 	assert.Equal(t, hash1, hash2)
 }
 
 func TestClusterUpdatableConfigJSONForHashIsCanonical(t *testing.T) {
-	config := ClusterUpdatableConfigFromCluster(&api.HCPOpenShiftCluster{
+	config := UpdateDispatchClusterUpdatableConfigFromCluster(&api.HCPOpenShiftCluster{
 		CustomerProperties: api.HCPOpenShiftClusterCustomerProperties{
 			NodeDrainTimeoutMinutes: 30,
 			API: api.CustomerAPIProfile{
@@ -201,13 +201,82 @@ func TestClusterUpdatableConfigJSONForHashIsCanonical(t *testing.T) {
 		},
 	})
 
-	raw, err := clusterUpdatableConfigJSONForHash(config)
+	raw, err := updateDispatchClusterUpdatableConfigJSONForHash(config)
 	require.NoError(t, err)
 
 	keys, err := topLevelJSONKeys(raw)
 	require.NoError(t, err)
 	assert.True(t, slices.IsSorted(keys), "top-level JSON keys must be sorted: %v", keys)
-	assert.Equal(t, []string{"authorizedCidrs", "autoscaling", "experimentalFeatures", "imageDigestMirrors", "nodeDrainTimeoutMinutes"}, keys)
+	assert.Equal(t, []string{"autoscaling", "experimentalFeatures", "imageDigestMirrors", "k8sAPIServerAuthorizedCIDRs", "nodeDrainTimeoutMinutes"}, keys)
+}
+
+func TestClusterUpdatableConfigFromClusterServiceClusterRoundTrip(t *testing.T) {
+	hcpCluster := &api.HCPOpenShiftCluster{
+		CustomerProperties: api.HCPOpenShiftClusterCustomerProperties{
+			NodeDrainTimeoutMinutes: 45,
+			API: api.CustomerAPIProfile{
+				AuthorizedCIDRs: []string{"10.0.0.0/8", "192.168.0.0/16"},
+			},
+			ImageDigestMirrors: []api.ImageDigestMirror{
+				{Source: "quay.io/openshift-release-dev", Mirrors: []string{"mirror.example.com"}},
+			},
+			Autoscaling: api.ClusterAutoscalingProfile{
+				MaxNodesTotal:               12,
+				MaxPodGracePeriodSeconds:    600,
+				MaxNodeProvisionTimeSeconds: 900,
+				PodPriorityThreshold:        -10,
+			},
+		},
+		ServiceProviderProperties: api.HCPOpenShiftClusterServiceProviderProperties{
+			ExperimentalFeatures: api.ExperimentalFeatures{
+				ControlPlaneAvailability: api.SingleReplicaControlPlane,
+				ControlPlanePodSizing:    api.MinimalControlPlanePodSizing,
+			},
+		},
+	}
+
+	oldClusterServiceCluster, err := arohcpv1alpha1.NewCluster().Build()
+	require.NoError(t, err)
+
+	clusterBuilder, autoscalerBuilder, err := BuildCSCluster(nil, "", hcpCluster, nil, oldClusterServiceCluster)
+	require.NoError(t, err)
+
+	csCluster, err := clusterBuilder.Autoscaler(autoscalerBuilder).Build()
+	require.NoError(t, err)
+
+	actualConfig, err := UpdateDispatchClusterUpdatableConfigFromClusterServiceCluster(csCluster)
+	require.NoError(t, err)
+
+	desiredHash, err := updateDispatchClusterUpdatableConfigHash(UpdateDispatchClusterUpdatableConfigFromCluster(hcpCluster))
+	require.NoError(t, err)
+	actualHash, err := updateDispatchClusterUpdatableConfigHash(actualConfig)
+	require.NoError(t, err)
+	assert.Equal(t, desiredHash, actualHash)
+}
+
+func TestClusterUpdatableConfigDiffersFromClusterService(t *testing.T) {
+	hcpCluster := &api.HCPOpenShiftCluster{
+		CustomerProperties: api.HCPOpenShiftClusterCustomerProperties{
+			NodeDrainTimeoutMinutes: 30,
+		},
+	}
+
+	oldClusterServiceCluster, err := arohcpv1alpha1.NewCluster().Build()
+	require.NoError(t, err)
+
+	matchingBuilder, matchingAutoscalerBuilder, err := BuildCSCluster(nil, "", hcpCluster, nil, oldClusterServiceCluster)
+	require.NoError(t, err)
+	matchingCSCluster, err := matchingBuilder.Autoscaler(matchingAutoscalerBuilder).Build()
+	require.NoError(t, err)
+
+	differs, err := UpdateDispatchClusterUpdatableConfigDiffersFromClusterService(hcpCluster, matchingCSCluster)
+	require.NoError(t, err)
+	assert.False(t, differs)
+
+	hcpCluster.CustomerProperties.NodeDrainTimeoutMinutes = 60
+	differs, err = UpdateDispatchClusterUpdatableConfigDiffersFromClusterService(hcpCluster, matchingCSCluster)
+	require.NoError(t, err)
+	assert.True(t, differs)
 }
 
 func TestApplyClusterUpdatableConfigExperimentalProperties(t *testing.T) {
@@ -216,8 +285,8 @@ func TestApplyClusterUpdatableConfigExperimentalProperties(t *testing.T) {
 
 	t.Run("enables both experimental properties", func(t *testing.T) {
 		properties := map[string]string{}
-		err := applyClusterUpdatableConfig(clusterBuilder, clusterAPIBuilder, properties, &clusterUpdatableConfig{
-			ExperimentalFeatures: clusterUpdatableExperimentalFeatures{
+		err := applyUpdateDispatchClusterUpdatableConfig(clusterBuilder, clusterAPIBuilder, properties, &updateDispatchClusterUpdatableConfig{
+			ExperimentalFeatures: updateDispatchClusterUpdatableConfigExperimentalFeatures{
 				ControlPlaneAvailability: api.SingleReplicaControlPlane,
 				ControlPlanePodSizing:    api.MinimalControlPlanePodSizing,
 			},
@@ -235,14 +304,14 @@ func TestApplyClusterUpdatableConfigExperimentalProperties(t *testing.T) {
 			CSPropertySizeOverride:  CSPropertyEnabled,
 			"other":                 "value",
 		}
-		err := applyClusterUpdatableConfig(clusterBuilder, clusterAPIBuilder, properties, &clusterUpdatableConfig{})
+		err := applyUpdateDispatchClusterUpdatableConfig(clusterBuilder, clusterAPIBuilder, properties, &updateDispatchClusterUpdatableConfig{})
 		require.NoError(t, err)
 		assert.Equal(t, map[string]string{"other": "value"}, properties)
 	})
 
 	t.Run("nil properties is treated as empty map", func(t *testing.T) {
-		err := applyClusterUpdatableConfig(clusterBuilder, clusterAPIBuilder, nil, &clusterUpdatableConfig{
-			ExperimentalFeatures: clusterUpdatableExperimentalFeatures{
+		err := applyUpdateDispatchClusterUpdatableConfig(clusterBuilder, clusterAPIBuilder, nil, &updateDispatchClusterUpdatableConfig{
+			ExperimentalFeatures: updateDispatchClusterUpdatableConfigExperimentalFeatures{
 				ControlPlanePodSizing: api.MinimalControlPlanePodSizing,
 			},
 		})
@@ -254,8 +323,8 @@ func TestApplyClusterUpdatableConfigExperimentalProperties(t *testing.T) {
 			CSPropertySingleReplica: "false",
 			CSPropertySizeOverride:  "false",
 		}
-		err := applyClusterUpdatableConfig(clusterBuilder, clusterAPIBuilder, properties, &clusterUpdatableConfig{
-			ExperimentalFeatures: clusterUpdatableExperimentalFeatures{
+		err := applyUpdateDispatchClusterUpdatableConfig(clusterBuilder, clusterAPIBuilder, properties, &updateDispatchClusterUpdatableConfig{
+			ExperimentalFeatures: updateDispatchClusterUpdatableConfigExperimentalFeatures{
 				ControlPlaneAvailability: api.SingleReplicaControlPlane,
 				ControlPlanePodSizing:    api.MinimalControlPlanePodSizing,
 			},
