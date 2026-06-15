@@ -427,10 +427,28 @@ func PostAsyncNotification(ctx context.Context, notificationClient *http.Client,
 	return nil
 }
 
+func getClusterForOperation(ctx context.Context, db database.ResourcesDBClient, operation *api.Operation) (*api.HCPOpenShiftCluster, error) {
+	if operation.ExternalID == nil {
+		return nil, fmt.Errorf("operation has no ExternalID")
+	}
+	return db.HCPClusters(operation.ExternalID.SubscriptionID, operation.ExternalID.ResourceGroupName).Get(ctx, operation.ExternalID.Name)
+}
+
+func clusterServiceIDFromCluster(cluster *api.HCPOpenShiftCluster) (api.InternalID, bool) {
+	if cluster.ServiceProviderProperties.ClusterServiceID == nil {
+		return api.InternalID{}, false
+	}
+	csID := *cluster.ServiceProviderProperties.ClusterServiceID
+	if len(csID.String()) == 0 {
+		return api.InternalID{}, false
+	}
+	return csID, true
+}
+
 // convertClusterStatus attempts to translate a ClusterStatus object from
 // Cluster Service into an ARM provisioning state and, if necessary, a
 // structured OData error.
-func convertClusterStatus(ctx context.Context, clusterServiceClient ocm.ClusterServiceClientSpec, operation *api.Operation, clusterStatus *arohcpv1alpha1.ClusterStatus) (arm.ProvisioningState, *arm.CloudErrorBody, error) {
+func convertClusterStatus(ctx context.Context, clusterServiceClient ocm.ClusterServiceClientSpec, operation *api.Operation, clusterStatus *arohcpv1alpha1.ClusterStatus, clusterServiceID api.InternalID) (arm.ProvisioningState, *arm.CloudErrorBody, error) {
 	var newOperationStatus = operation.Status
 	var opError *arm.CloudErrorBody
 	var err error
@@ -451,7 +469,7 @@ func convertClusterStatus(ctx context.Context, clusterServiceClient ocm.ClusterS
 		// Construct the cloud error code depending on the provision error code.
 		switch code {
 		case InflightChecksFailedProvisionErrorCode:
-			opError, err = convertInflightChecks(ctx, clusterServiceClient, operation.InternalID)
+			opError, err = convertInflightChecks(ctx, clusterServiceClient, clusterServiceID)
 			if err != nil {
 				return newOperationStatus, opError, err
 			}

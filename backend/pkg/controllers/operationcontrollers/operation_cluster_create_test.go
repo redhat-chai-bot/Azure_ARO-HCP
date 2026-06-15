@@ -54,16 +54,20 @@ func TestOperationClusterCreate_SynchronizeOperation(t *testing.T) {
 	createdAt := mustParseTime("2025-01-15T10:30:00Z")
 
 	tests := []struct {
-		name         string
-		clusterState arohcpv1alpha1.ClusterState
-		createdAt    *time.Time
-		expectError  bool
-		verify       func(t *testing.T, ctx context.Context, db *databasetesting.MockResourcesDBClient, fixture *clusterTestFixture)
+		name                     string
+		clusterState             arohcpv1alpha1.ClusterState
+		createdAt                *time.Time
+		clearOperationInternalID bool
+		clearClusterServiceID    bool
+		expectCSCall             bool
+		expectError              bool
+		verify                   func(t *testing.T, ctx context.Context, db *databasetesting.MockResourcesDBClient, fixture *clusterTestFixture)
 	}{
 		{
 			name:         "successful create updates operation to succeeded",
 			clusterState: arohcpv1alpha1.ClusterStateReady,
 			createdAt:    &createdAt,
+			expectCSCall: true,
 			expectError:  false,
 			verify: func(t *testing.T, ctx context.Context, db *databasetesting.MockResourcesDBClient, fixture *clusterTestFixture) {
 				op, err := db.Operations(testSubscriptionID).Get(ctx, testOperationName)
@@ -75,11 +79,38 @@ func TestOperationClusterCreate_SynchronizeOperation(t *testing.T) {
 			name:         "non-terminal cluster state updates to provisioning",
 			clusterState: arohcpv1alpha1.ClusterStateInstalling,
 			createdAt:    nil,
+			expectCSCall: true,
 			expectError:  false,
 			verify: func(t *testing.T, ctx context.Context, db *databasetesting.MockResourcesDBClient, fixture *clusterTestFixture) {
 				op, err := db.Operations(testSubscriptionID).Get(ctx, testOperationName)
 				require.NoError(t, err)
 				assert.Equal(t, arm.ProvisioningStateProvisioning, op.Status)
+			},
+		},
+		{
+			name:                     "polls cluster service when operation InternalID is empty",
+			clusterState:             arohcpv1alpha1.ClusterStateReady,
+			createdAt:                &createdAt,
+			clearOperationInternalID: true,
+			expectCSCall:             true,
+			expectError:              false,
+			verify: func(t *testing.T, ctx context.Context, db *databasetesting.MockResourcesDBClient, fixture *clusterTestFixture) {
+				op, err := db.Operations(testSubscriptionID).Get(ctx, testOperationName)
+				require.NoError(t, err)
+				assert.Equal(t, arm.ProvisioningStateSucceeded, op.Status)
+			},
+		},
+		{
+			name:                  "waits when cluster ClusterServiceID is unset",
+			clusterState:          arohcpv1alpha1.ClusterStateReady,
+			createdAt:             &createdAt,
+			clearClusterServiceID: true,
+			expectCSCall:          false,
+			expectError:           false,
+			verify: func(t *testing.T, ctx context.Context, db *databasetesting.MockResourcesDBClient, fixture *clusterTestFixture) {
+				op, err := db.Operations(testSubscriptionID).Get(ctx, testOperationName)
+				require.NoError(t, err)
+				assert.Equal(t, arm.ProvisioningStateAccepted, op.Status)
 			},
 		},
 	}
@@ -93,20 +124,28 @@ func TestOperationClusterCreate_SynchronizeOperation(t *testing.T) {
 
 			fixture := newClusterTestFixture()
 			cluster := fixture.newCluster(tt.createdAt)
+			if tt.clearClusterServiceID {
+				cluster.ServiceProviderProperties.ClusterServiceID = nil
+			}
 			operation := fixture.newOperation(database.OperationRequestCreate)
+			if tt.clearOperationInternalID {
+				operation.InternalID = api.InternalID{}
+			}
 
 			mockResourcesDBClient, err := databasetesting.NewMockResourcesDBClientWithResources(ctx, []any{cluster, operation})
 			require.NoError(t, err)
 
 			mockCSClient := ocm.NewMockClusterServiceClientSpec(ctrl)
-			clusterStatus, err := arohcpv1alpha1.NewClusterStatus().
-				State(tt.clusterState).
-				Build()
-			require.NoError(t, err)
+			if tt.expectCSCall {
+				clusterStatus, err := arohcpv1alpha1.NewClusterStatus().
+					State(tt.clusterState).
+					Build()
+				require.NoError(t, err)
 
-			mockCSClient.EXPECT().
-				GetClusterStatus(gomock.Any(), fixture.clusterInternalID).
-				Return(clusterStatus, nil)
+				mockCSClient.EXPECT().
+					GetClusterStatus(gomock.Any(), fixture.clusterInternalID).
+					Return(clusterStatus, nil)
+			}
 
 			// Provide listers so that determineOperationStatus can check cluster
 			// and hosted cluster state from cosmos.
@@ -127,13 +166,18 @@ func TestOperationClusterCreate_SynchronizeOperation(t *testing.T) {
 				},
 			})
 
+			listerCluster := newClusterWithAPIURL("https://api.example.com")
+			if tt.clearClusterServiceID {
+				listerCluster.ServiceProviderProperties.ClusterServiceID = nil
+			}
+
 			controller := &operationClusterCreate{
 				clock:                utilsclock.RealClock{},
 				resourcesDBClient:    mockResourcesDBClient,
 				clusterServiceClient: mockCSClient,
 				notificationClient:   nil,
 				clusterLister: &listertesting.SliceClusterLister{
-					Clusters: []*api.HCPOpenShiftCluster{newClusterWithAPIURL("https://api.example.com")},
+					Clusters: []*api.HCPOpenShiftCluster{listerCluster},
 				},
 				readDesireLister: &internallistertesting.SliceReadDesireLister{
 					Desires: []*kubeapplier.ReadDesire{succeededDesire},

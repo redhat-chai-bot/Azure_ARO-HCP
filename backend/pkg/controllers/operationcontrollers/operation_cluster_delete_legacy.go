@@ -17,6 +17,7 @@ package operationcontrollers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -48,11 +49,21 @@ func (c *operationClusterDelete) legacySynchronizeOperation(ctx context.Context,
 		return nil // no work to do
 	}
 
-	if len(operation.InternalID.String()) == 0 {
+	cluster, err := getClusterForOperation(ctx, c.resourcesDBClient, operation)
+	if database.IsNotFoundError(err) {
+		logger.Info("cluster document not found, waiting")
+		return nil
+	}
+	if err != nil {
+		return utils.TrackError(fmt.Errorf("failed to get cluster: %w", err))
+	}
+	clusterServiceID, ok := clusterServiceIDFromCluster(cluster)
+	if !ok {
+		logger.Info("ClusterServiceID not yet set, waiting")
 		return nil
 	}
 
-	clusterStatus, err := c.clusterServiceClient.GetClusterStatus(ctx, operation.InternalID)
+	clusterStatus, err := c.clusterServiceClient.GetClusterStatus(ctx, clusterServiceID)
 	var ocmGetClusterError *ocmerrors.Error
 	if err != nil && errors.As(err, &ocmGetClusterError) && ocmGetClusterError.Status() == http.StatusNotFound {
 		logger.Info("cluster was deleted")
@@ -115,7 +126,7 @@ func (c *operationClusterDelete) legacySynchronizeOperation(ctx context.Context,
 		return utils.TrackError(err)
 	}
 
-	newOperationStatus, newOperationError, err := convertClusterStatus(ctx, c.clusterServiceClient, operation, clusterStatus)
+	newOperationStatus, newOperationError, err := convertClusterStatus(ctx, c.clusterServiceClient, operation, clusterStatus, clusterServiceID)
 	if err != nil {
 		return utils.TrackError(err)
 	}

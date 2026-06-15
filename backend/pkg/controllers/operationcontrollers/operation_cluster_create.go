@@ -130,17 +130,18 @@ func (c *operationClusterCreate) SynchronizeOperation(ctx context.Context, key c
 		return nil // no work to do
 	}
 
-	clusterServiceID := operation.InternalID
-	if len(clusterServiceID.String()) == 0 {
-		cluster, err := c.clusterLister.Get(ctx, operation.ExternalID.SubscriptionID, operation.ExternalID.ResourceGroupName, operation.ExternalID.Name)
-		if err != nil {
-			return utils.TrackError(fmt.Errorf("failed to get cluster to resolve ClusterServiceID: %w", err))
-		}
-		if cluster.ServiceProviderProperties.ClusterServiceID == nil || len(cluster.ServiceProviderProperties.ClusterServiceID.String()) == 0 {
-			logger.Info("ClusterServiceID not yet set, waiting for CS create controller")
-			return nil
-		}
-		clusterServiceID = *cluster.ServiceProviderProperties.ClusterServiceID
+	cluster, err := c.clusterLister.Get(ctx, operation.ExternalID.SubscriptionID, operation.ExternalID.ResourceGroupName, operation.ExternalID.Name)
+	if database.IsNotFoundError(err) {
+		logger.Info("cluster not yet in cache, waiting")
+		return nil
+	}
+	if err != nil {
+		return utils.TrackError(fmt.Errorf("failed to get cluster to resolve ClusterServiceID: %w", err))
+	}
+	clusterServiceID, ok := clusterServiceIDFromCluster(cluster)
+	if !ok {
+		logger.Info("ClusterServiceID not yet set, waiting for ClusterClusterServiceCreate controller")
+		return nil
 	}
 
 	clusterStatus, err := c.clusterServiceClient.GetClusterStatus(ctx, clusterServiceID)
@@ -154,7 +155,7 @@ func (c *operationClusterCreate) SynchronizeOperation(ctx context.Context, key c
 	}
 	logger.Info("new status via cosmos", "newStatus", cosmosNewOperationState.provisioningState, "newOperationMessage", cosmosNewOperationState.message)
 
-	newOperationStatus, opError, err := convertClusterStatus(ctx, c.clusterServiceClient, operation, clusterStatus)
+	newOperationStatus, opError, err := convertClusterStatus(ctx, c.clusterServiceClient, operation, clusterStatus, clusterServiceID)
 	if err != nil {
 		return utils.TrackError(err)
 	}

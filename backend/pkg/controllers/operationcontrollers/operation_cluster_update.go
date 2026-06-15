@@ -114,9 +114,13 @@ func (c *operationClusterUpdate) SynchronizeOperation(ctx context.Context, key c
 	if !c.ShouldProcess(ctx, operation) {
 		return nil // no work to do
 	}
-	if len(operation.InternalID.String()) == 0 {
-		// we cannot proceed: yet.
-		// TODO when we update to make clusterserice creation async, we need to handle this correctly.
+
+	cluster, err := getClusterForOperation(ctx, c.resourcesDBClient, operation)
+	if err != nil {
+		return utils.TrackError(err)
+	}
+	if _, ok := clusterServiceIDFromCluster(cluster); !ok {
+		logger.Info("ClusterServiceID not yet set, waiting")
 		return nil
 	}
 
@@ -243,11 +247,21 @@ func (c *operationClusterUpdate) desiredVersionResolutionOperationState(ctx cont
 
 func (c *operationClusterUpdate) clusterServiceUpdateOperationState(ctx context.Context, operation *api.Operation) (*operationState, error) {
 	logger := utils.LoggerFromContext(ctx)
-	clusterStatus, err := c.clusterServiceClient.GetClusterStatus(ctx, operation.InternalID)
+
+	cluster, err := getClusterForOperation(ctx, c.resourcesDBClient, operation)
 	if err != nil {
 		return nil, utils.TrackError(err)
 	}
-	newOperationStatus, opError, err := convertClusterStatus(ctx, c.clusterServiceClient, operation, clusterStatus)
+	clusterServiceID, ok := clusterServiceIDFromCluster(cluster)
+	if !ok {
+		return nil, utils.TrackError(fmt.Errorf("cluster %s has no ClusterServiceID", cluster.Name))
+	}
+
+	clusterStatus, err := c.clusterServiceClient.GetClusterStatus(ctx, clusterServiceID)
+	if err != nil {
+		return nil, utils.TrackError(err)
+	}
+	newOperationStatus, opError, err := convertClusterStatus(ctx, c.clusterServiceClient, operation, clusterStatus, clusterServiceID)
 	if err != nil {
 		return nil, utils.TrackError(err)
 	}
