@@ -279,6 +279,64 @@ func TestClusterUpdateDispatchConfigDiffers(t *testing.T) {
 	assert.True(t, differs)
 }
 
+func TestClusterUpdateDispatchConfigNodeDrainTimeoutFromCS(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		csCluster *arohcpv1alpha1.Cluster
+		want      int32
+	}{
+		{
+			name:      "nil cluster",
+			csCluster: nil,
+			want:      0,
+		},
+		{
+			name: "unset grace period",
+			csCluster: func() *arohcpv1alpha1.Cluster {
+				cluster, err := arohcpv1alpha1.NewCluster().Build()
+				require.NoError(t, err)
+				return cluster
+			}(),
+			want: 0,
+		},
+		{
+			name: "minutes unit",
+			csCluster: func() *arohcpv1alpha1.Cluster {
+				cluster, err := arohcpv1alpha1.NewCluster().
+					NodeDrainGracePeriod(arohcpv1alpha1.NewValue().
+						Unit(csNodeDrainGracePeriodUnit).
+						Value(float64(45))).
+					Build()
+				require.NoError(t, err)
+				return cluster
+			}(),
+			want: 45,
+		},
+		{
+			name: "non-minutes unit treated as unset",
+			csCluster: func() *arohcpv1alpha1.Cluster {
+				cluster, err := arohcpv1alpha1.NewCluster().
+					NodeDrainGracePeriod(arohcpv1alpha1.NewValue().
+						Unit("hours").
+						Value(float64(1))).
+					Build()
+				require.NoError(t, err)
+				return cluster
+			}(),
+			want: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, ClusterUpdateDispatchConfigNodeDrainTimeoutFromCS(tt.csCluster))
+		})
+	}
+}
+
 func TestClusterUpdateDispatchConfigJSONFromRPAndCS(t *testing.T) {
 	hcpCluster := &api.HCPOpenShiftCluster{
 		CustomerProperties: api.HCPOpenShiftClusterCustomerProperties{

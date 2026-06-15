@@ -77,8 +77,8 @@ const (
 	csOutboundType                       string = "load_balancer"
 	csUsernameClaimPrefixPolicyNoPrefix  string = "NoPrefix"
 	csUsernameClaimPrefixPolicyPrefix    string = "Prefix"
-	csCIDRBlockAllowAccessModeAllowAll   string = "allow_all"
-	csCIDRBlockAllowAccessModeAllowList  string = "allow_list"
+	CSCIDRBlockAllowAccessModeAllowAll   string = "allow_all"
+	CSCIDRBlockAllowAccessModeAllowList  string = "allow_list"
 	csOsDiskPersistencePersistent        string = "persistent"
 	csOsDiskPersistenceEphemeral         string = "ephemeral"
 	csProvisioningShardStatusActive      string = "active"
@@ -264,9 +264,9 @@ func convertCIDRBlockAllowAccessRPToCS(in api.CustomerAPIProfile) (*arohcpv1alph
 	cidrBlockAllowAccess := arohcpv1alpha1.NewCIDRBlockAllowAccess()
 
 	if in.AuthorizedCIDRs == nil {
-		cidrBlockAllowAccess.Mode(csCIDRBlockAllowAccessModeAllowAll)
+		cidrBlockAllowAccess.Mode(CSCIDRBlockAllowAccessModeAllowAll)
 	} else if len(in.AuthorizedCIDRs) > 0 {
-		cidrBlockAllowAccess.Mode(csCIDRBlockAllowAccessModeAllowList)
+		cidrBlockAllowAccess.Mode(CSCIDRBlockAllowAccessModeAllowList)
 		cidrBlockAllowAccess.Values(in.AuthorizedCIDRs...)
 	} else {
 		// Unreachable: empty AuthorizedCIDRs list is disallowed by validation

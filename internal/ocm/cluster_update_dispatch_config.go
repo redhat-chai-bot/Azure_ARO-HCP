@@ -162,8 +162,8 @@ func clusterUpdateDispatchConfigAutoscalingFromRP(profile api.ClusterAutoscaling
 func clusterUpdateDispatchConfigFromCS(csCluster *arohcpv1alpha1.Cluster) (*clusterUpdateDispatchConfig, error) {
 	config := &clusterUpdateDispatchConfig{}
 
-	config.NodeDrainTimeoutMinutes = clusterUpdateDispatchConfigNodeDrainTimeoutFromCS(csCluster)
-	config.K8sAPIServerAuthorizedCIDRs = clusterUpdateDispatchConfigAuthorizedCIDRsFromCS(csCluster.API())
+	config.NodeDrainTimeoutMinutes = ClusterUpdateDispatchConfigNodeDrainTimeoutFromCS(csCluster)
+	config.K8sAPIServerAuthorizedCIDRs = ClusterUpdateDispatchConfigAuthorizedCIDRsFromCS(csCluster.API())
 	config.ImageDigestMirrors = clusterUpdateDispatchConfigImageDigestMirrorsFromCS(csCluster.RegistryConfig())
 	config.ExperimentalFeatures = clusterUpdateDispatchConfigExperimentalFeaturesFromCS(csCluster)
 
@@ -176,7 +176,9 @@ func clusterUpdateDispatchConfigFromCS(csCluster *arohcpv1alpha1.Cluster) (*clus
 	return config, nil
 }
 
-func clusterUpdateDispatchConfigNodeDrainTimeoutFromCS(in *arohcpv1alpha1.Cluster) int32 {
+// ClusterUpdateDispatchConfigNodeDrainTimeoutFromCS extracts the node drain timeout in
+// minutes from a Cluster Service cluster object.
+func ClusterUpdateDispatchConfigNodeDrainTimeoutFromCS(in *arohcpv1alpha1.Cluster) int32 {
 	if nodeDrainGracePeriod, ok := in.GetNodeDrainGracePeriod(); ok {
 		if unit, ok := nodeDrainGracePeriod.GetUnit(); ok && unit == csNodeDrainGracePeriodUnit {
 			return int32(nodeDrainGracePeriod.Value())
@@ -185,7 +187,9 @@ func clusterUpdateDispatchConfigNodeDrainTimeoutFromCS(in *arohcpv1alpha1.Cluste
 	return 0
 }
 
-func clusterUpdateDispatchConfigAuthorizedCIDRsFromCS(in *arohcpv1alpha1.ClusterAPI) []string {
+// ClusterUpdateDispatchConfigAuthorizedCIDRsFromCS extracts customer authorized CIDRs from
+// a Cluster Service cluster API configuration.
+func ClusterUpdateDispatchConfigAuthorizedCIDRsFromCS(in *arohcpv1alpha1.ClusterAPI) []string {
 	cidrAccess := in.CIDRBlockAccess()
 	if cidrAccess.Empty() {
 		return nil
