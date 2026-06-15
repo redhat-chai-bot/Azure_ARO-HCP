@@ -15,6 +15,7 @@
 package clusterupdate
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	arohcpv1alpha1 "github.com/openshift-online/ocm-sdk-go/arohcp/v1alpha1"
 	ocmerrors "github.com/openshift-online/ocm-sdk-go/errors"
 
 	"github.com/Azure/ARO-HCP/backend/pkg/controllers/controllerutils"
@@ -130,7 +132,7 @@ func (c *clusterClusterServiceUpdateDispatchSyncer) SyncOnce(ctx context.Context
 		return utils.TrackError(fmt.Errorf("failed to get cluster from Cluster Service: %w", err))
 	}
 
-	needsUpdate, err := ocm.UpdateDispatchClusterUpdatableConfigDiffersFromClusterService(cluster, clusterServiceCluster)
+	needsUpdate, err := ocm.ClusterUpdateDispatchConfigDiffers(cluster, clusterServiceCluster)
 	if err != nil {
 		return err
 	}
@@ -138,12 +140,35 @@ func (c *clusterClusterServiceUpdateDispatchSyncer) SyncOnce(ctx context.Context
 		return nil
 	}
 
+	desiredConfigJSON, err := ocm.ClusterUpdateDispatchConfigJSONFromRP(cluster)
+	if err != nil {
+		return err
+	}
+	actualConfigJSON, err := ocm.ClusterUpdateDispatchConfigJSONFromCS(clusterServiceCluster)
+	if err != nil {
+		return err
+	}
+
+	logger.Info("update dispatch config differs between RP and CS",
+		"clusterServiceID", clusterCSID.String(),
+		"desiredConfig", desiredConfigJSON,
+		"actualConfig", actualConfigJSON,
+	)
+
 	csClusterBuilder, csAutoscalerBuilder, err := ocm.BuildCSCluster(cluster.ID, "", cluster, nil, clusterServiceCluster)
 	if err != nil {
 		return utils.TrackError(fmt.Errorf("failed to build CS cluster: %w", err))
 	}
 
-	logger.Info("dispatching cluster update to Cluster Service", "clusterServiceID", clusterCSID.String())
+	clusterAutoscalerPayload, err := c.marshalClusterServiceClusterAutoscalerUpdatePayload(csAutoscalerBuilder)
+	if err != nil {
+		return utils.TrackError(fmt.Errorf("failed to marshal Cluster Service autoscaler update payload: %w", err))
+	}
+
+	logger.Info("dispatching cluster autoscaler update to Cluster Service",
+		"clusterServiceID", clusterCSID.String(),
+		"clusterServiceClusterAutoscalerPayload", clusterAutoscalerPayload,
+	)
 
 	_, err = c.clusterServiceClient.UpdateClusterAutoscaler(ctx, *clusterCSID, csAutoscalerBuilder)
 	if err != nil {
@@ -158,6 +183,16 @@ func (c *clusterClusterServiceUpdateDispatchSyncer) SyncOnce(ctx context.Context
 		}
 		return utils.TrackError(fmt.Errorf("failed to update cluster-service ClusterAutoscaler: %w", err))
 	}
+
+	clusterPayload, err := c.marshalClusterServiceClusterUpdatePayload(csClusterBuilder)
+	if err != nil {
+		return utils.TrackError(fmt.Errorf("failed to marshal Cluster Service cluster update payload: %w", err))
+	}
+
+	logger.Info("dispatching cluster update to Cluster Service",
+		"clusterServiceID", clusterCSID.String(),
+		"clusterServiceClusterPayload", clusterPayload,
+	)
 
 	_, err = c.clusterServiceClient.UpdateCluster(ctx, *clusterCSID, csClusterBuilder)
 	if err != nil {
@@ -175,4 +210,36 @@ func (c *clusterClusterServiceUpdateDispatchSyncer) SyncOnce(ctx context.Context
 
 	logger.Info("requested cluster-service Cluster update", "clusterServiceID", clusterCSID.String())
 	return nil
+}
+
+func (c *clusterClusterServiceUpdateDispatchSyncer) marshalClusterServiceClusterUpdatePayload(
+	clusterBuilder *arohcpv1alpha1.ClusterBuilder,
+) (string, error) {
+	cluster, err := clusterBuilder.Build()
+	if err != nil {
+		return "", err
+	}
+
+	var clusterBuffer bytes.Buffer
+	if err := arohcpv1alpha1.MarshalCluster(cluster, &clusterBuffer); err != nil {
+		return "", err
+	}
+
+	return clusterBuffer.String(), nil
+}
+
+func (c *clusterClusterServiceUpdateDispatchSyncer) marshalClusterServiceClusterAutoscalerUpdatePayload(
+	autoscalerBuilder *arohcpv1alpha1.ClusterAutoscalerBuilder,
+) (string, error) {
+	autoscaler, err := autoscalerBuilder.Build()
+	if err != nil {
+		return "", err
+	}
+
+	var autoscalerBuffer bytes.Buffer
+	if err := arohcpv1alpha1.MarshalClusterAutoscaler(autoscaler, &autoscalerBuffer); err != nil {
+		return "", err
+	}
+
+	return autoscalerBuffer.String(), nil
 }

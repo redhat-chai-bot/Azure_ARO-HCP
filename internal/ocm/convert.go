@@ -378,8 +378,8 @@ func BuildCSCluster(resourceID *azcorearm.ResourceID, tenantID string, hcpCluste
 	}
 
 	// Property layering for CS Properties(): preserve existing values (on update),
-	// overlay caller-specified properties, then applyClusterUpdatableConfig overlays
-	// updatable experimental features.
+	// overlay caller-specified properties, then clusterUpdateDispatchConfig.applyToCSBuilders overlays
+	// dispatch-managed experimental features.
 	properties := map[string]string{}
 	if oldClusterServiceCluster != nil {
 		for k, v := range oldClusterServiceCluster.Properties() {
@@ -390,13 +390,13 @@ func BuildCSCluster(resourceID *azcorearm.ResourceID, tenantID string, hcpCluste
 		properties[k] = v
 	}
 
-	updatableConfig := UpdateDispatchClusterUpdatableConfigFromCluster(hcpCluster)
-	err = applyUpdateDispatchClusterUpdatableConfig(clusterBuilder, clusterAPIBuilder, properties, updatableConfig)
+	clusterUpdateDispatchConfig := clusterUpdateDispatchConfigFromRP(hcpCluster)
+	err = clusterUpdateDispatchConfig.applyToCSBuilders(clusterBuilder, clusterAPIBuilder, properties)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	clusterAutoscalerBuilder, err := applyUpdateDispatchClusterUpdatableAutoscalerConfig(updatableConfig)
+	clusterAutoscalerBuilder, err := clusterUpdateDispatchConfig.autoscalerBuilder()
 	if err != nil {
 		return nil, nil, err
 	}

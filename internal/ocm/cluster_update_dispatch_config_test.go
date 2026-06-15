@@ -28,7 +28,7 @@ import (
 	"github.com/Azure/ARO-HCP/internal/api/arm"
 )
 
-func TestClusterUpdatableConfigHash(t *testing.T) {
+func TestClusterUpdateDispatchConfigHash(t *testing.T) {
 	base := &api.HCPOpenShiftCluster{
 		CustomerProperties: api.HCPOpenShiftClusterCustomerProperties{
 			NodeDrainTimeoutMinutes: 30,
@@ -42,11 +42,11 @@ func TestClusterUpdatableConfigHash(t *testing.T) {
 		},
 	}
 
-	hash1, err := UpdateDispatchClusterUpdatableConfigHash(base)
+	hash1, err := clusterUpdateDispatchConfigHash(base)
 	require.NoError(t, err)
 	require.NotEmpty(t, hash1)
 
-	hash2, err := UpdateDispatchClusterUpdatableConfigHash(base)
+	hash2, err := clusterUpdateDispatchConfigHash(base)
 	require.NoError(t, err)
 	assert.Equal(t, hash1, hash2)
 
@@ -62,7 +62,7 @@ func TestClusterUpdatableConfigHash(t *testing.T) {
 			},
 		},
 	}
-	hashDifferent, err := UpdateDispatchClusterUpdatableConfigHash(differentDrain)
+	hashDifferent, err := clusterUpdateDispatchConfigHash(differentDrain)
 	require.NoError(t, err)
 	assert.NotEqual(t, hash1, hashDifferent)
 
@@ -78,7 +78,7 @@ func TestClusterUpdatableConfigHash(t *testing.T) {
 			},
 		},
 	}
-	hashCIDRs, err := UpdateDispatchClusterUpdatableConfigHash(differentCIDRs)
+	hashCIDRs, err := clusterUpdateDispatchConfigHash(differentCIDRs)
 	require.NoError(t, err)
 	assert.NotEqual(t, hash1, hashCIDRs)
 
@@ -97,7 +97,7 @@ func TestClusterUpdatableConfigHash(t *testing.T) {
 			},
 		},
 	}
-	hashMirrors, err := UpdateDispatchClusterUpdatableConfigHash(withMirrors)
+	hashMirrors, err := clusterUpdateDispatchConfigHash(withMirrors)
 	require.NoError(t, err)
 	assert.NotEqual(t, hash1, hashMirrors)
 
@@ -113,7 +113,7 @@ func TestClusterUpdatableConfigHash(t *testing.T) {
 			},
 		},
 	}
-	hashAS, err := UpdateDispatchClusterUpdatableConfigHash(differentAutoscaling)
+	hashAS, err := clusterUpdateDispatchConfigHash(differentAutoscaling)
 	require.NoError(t, err)
 	assert.NotEqual(t, hash1, hashAS)
 
@@ -125,12 +125,12 @@ func TestClusterUpdatableConfigHash(t *testing.T) {
 			},
 		},
 	}
-	hashSizeOverride, err := UpdateDispatchClusterUpdatableConfigHash(withSizeOverride)
+	hashSizeOverride, err := clusterUpdateDispatchConfigHash(withSizeOverride)
 	require.NoError(t, err)
 	assert.NotEqual(t, hash1, hashSizeOverride)
 }
 
-func TestClusterUpdatableConfigHashExcludesNonUpdatableFields(t *testing.T) {
+func TestClusterUpdateDispatchConfigHashExcludesNonUpdatableFields(t *testing.T) {
 	cluster1 := &api.HCPOpenShiftCluster{
 		CustomerProperties: api.HCPOpenShiftClusterCustomerProperties{
 			NodeDrainTimeoutMinutes: 30,
@@ -151,14 +151,14 @@ func TestClusterUpdatableConfigHashExcludesNonUpdatableFields(t *testing.T) {
 		},
 	}
 
-	hash1, err := UpdateDispatchClusterUpdatableConfigHash(cluster1)
+	hash1, err := clusterUpdateDispatchConfigHash(cluster1)
 	require.NoError(t, err)
-	hash2, err := UpdateDispatchClusterUpdatableConfigHash(cluster2)
+	hash2, err := clusterUpdateDispatchConfigHash(cluster2)
 	require.NoError(t, err)
 	assert.Equal(t, hash1, hash2)
 }
 
-func TestClusterUpdatableConfigHashExcludesTagsWithoutExperimentalFeatures(t *testing.T) {
+func TestClusterUpdateDispatchConfigHashExcludesTagsWithoutExperimentalFeatures(t *testing.T) {
 	cluster1 := &api.HCPOpenShiftCluster{
 		TrackedResource: arm.TrackedResource{
 			Tags: map[string]string{api.TagClusterSizeOverride: string(api.MinimalControlPlanePodSizing)},
@@ -173,15 +173,15 @@ func TestClusterUpdatableConfigHashExcludesTagsWithoutExperimentalFeatures(t *te
 		},
 	}
 
-	hash1, err := UpdateDispatchClusterUpdatableConfigHash(cluster1)
+	hash1, err := clusterUpdateDispatchConfigHash(cluster1)
 	require.NoError(t, err)
-	hash2, err := UpdateDispatchClusterUpdatableConfigHash(cluster2)
+	hash2, err := clusterUpdateDispatchConfigHash(cluster2)
 	require.NoError(t, err)
 	assert.Equal(t, hash1, hash2)
 }
 
-func TestClusterUpdatableConfigJSONForHashIsCanonical(t *testing.T) {
-	config := UpdateDispatchClusterUpdatableConfigFromCluster(&api.HCPOpenShiftCluster{
+func TestClusterUpdateDispatchConfigCanonicalJSON(t *testing.T) {
+	config := clusterUpdateDispatchConfigFromRP(&api.HCPOpenShiftCluster{
 		CustomerProperties: api.HCPOpenShiftClusterCustomerProperties{
 			NodeDrainTimeoutMinutes: 30,
 			API: api.CustomerAPIProfile{
@@ -201,16 +201,16 @@ func TestClusterUpdatableConfigJSONForHashIsCanonical(t *testing.T) {
 		},
 	})
 
-	raw, err := updateDispatchClusterUpdatableConfigJSONForHash(config)
+	raw, err := config.canonicalJSON()
 	require.NoError(t, err)
 
-	keys, err := topLevelJSONKeys(raw)
+	keys, err := topLevelJSONKeys([]byte(raw))
 	require.NoError(t, err)
 	assert.True(t, slices.IsSorted(keys), "top-level JSON keys must be sorted: %v", keys)
 	assert.Equal(t, []string{"autoscaling", "experimentalFeatures", "imageDigestMirrors", "k8sAPIServerAuthorizedCIDRs", "nodeDrainTimeoutMinutes"}, keys)
 }
 
-func TestClusterUpdatableConfigFromClusterServiceClusterRoundTrip(t *testing.T) {
+func TestClusterUpdateDispatchConfigFromCSRoundTrip(t *testing.T) {
 	hcpCluster := &api.HCPOpenShiftCluster{
 		CustomerProperties: api.HCPOpenShiftClusterCustomerProperties{
 			NodeDrainTimeoutMinutes: 45,
@@ -244,17 +244,17 @@ func TestClusterUpdatableConfigFromClusterServiceClusterRoundTrip(t *testing.T) 
 	csCluster, err := clusterBuilder.Autoscaler(autoscalerBuilder).Build()
 	require.NoError(t, err)
 
-	actualConfig, err := UpdateDispatchClusterUpdatableConfigFromClusterServiceCluster(csCluster)
+	actualConfig, err := clusterUpdateDispatchConfigFromCS(csCluster)
 	require.NoError(t, err)
 
-	desiredHash, err := updateDispatchClusterUpdatableConfigHash(UpdateDispatchClusterUpdatableConfigFromCluster(hcpCluster))
+	desiredHash, err := clusterUpdateDispatchConfigFromRP(hcpCluster).hash()
 	require.NoError(t, err)
-	actualHash, err := updateDispatchClusterUpdatableConfigHash(actualConfig)
+	actualHash, err := actualConfig.hash()
 	require.NoError(t, err)
 	assert.Equal(t, desiredHash, actualHash)
 }
 
-func TestClusterUpdatableConfigDiffersFromClusterService(t *testing.T) {
+func TestClusterUpdateDispatchConfigDiffers(t *testing.T) {
 	hcpCluster := &api.HCPOpenShiftCluster{
 		CustomerProperties: api.HCPOpenShiftClusterCustomerProperties{
 			NodeDrainTimeoutMinutes: 30,
@@ -269,28 +269,54 @@ func TestClusterUpdatableConfigDiffersFromClusterService(t *testing.T) {
 	matchingCSCluster, err := matchingBuilder.Autoscaler(matchingAutoscalerBuilder).Build()
 	require.NoError(t, err)
 
-	differs, err := UpdateDispatchClusterUpdatableConfigDiffersFromClusterService(hcpCluster, matchingCSCluster)
+	differs, err := ClusterUpdateDispatchConfigDiffers(hcpCluster, matchingCSCluster)
 	require.NoError(t, err)
 	assert.False(t, differs)
 
 	hcpCluster.CustomerProperties.NodeDrainTimeoutMinutes = 60
-	differs, err = UpdateDispatchClusterUpdatableConfigDiffersFromClusterService(hcpCluster, matchingCSCluster)
+	differs, err = ClusterUpdateDispatchConfigDiffers(hcpCluster, matchingCSCluster)
 	require.NoError(t, err)
 	assert.True(t, differs)
 }
 
-func TestApplyClusterUpdatableConfigExperimentalProperties(t *testing.T) {
+func TestClusterUpdateDispatchConfigJSONFromRPAndCS(t *testing.T) {
+	hcpCluster := &api.HCPOpenShiftCluster{
+		CustomerProperties: api.HCPOpenShiftClusterCustomerProperties{
+			NodeDrainTimeoutMinutes: 45,
+			API: api.CustomerAPIProfile{
+				AuthorizedCIDRs: []string{"10.0.0.0/8"},
+			},
+		},
+	}
+
+	oldClusterServiceCluster, err := arohcpv1alpha1.NewCluster().Build()
+	require.NoError(t, err)
+
+	clusterBuilder, autoscalerBuilder, err := BuildCSCluster(nil, "", hcpCluster, nil, oldClusterServiceCluster)
+	require.NoError(t, err)
+	csCluster, err := clusterBuilder.Autoscaler(autoscalerBuilder).Build()
+	require.NoError(t, err)
+
+	desiredJSON, err := ClusterUpdateDispatchConfigJSONFromRP(hcpCluster)
+	require.NoError(t, err)
+	actualJSON, err := ClusterUpdateDispatchConfigJSONFromCS(csCluster)
+	require.NoError(t, err)
+	assert.JSONEq(t, desiredJSON, actualJSON)
+	assert.Contains(t, desiredJSON, `"nodeDrainTimeoutMinutes":45`)
+}
+
+func TestApplyClusterUpdateDispatchConfigExperimentalProperties(t *testing.T) {
 	clusterBuilder := arohcpv1alpha1.NewCluster()
 	clusterAPIBuilder := arohcpv1alpha1.NewClusterAPI()
 
 	t.Run("enables both experimental properties", func(t *testing.T) {
 		properties := map[string]string{}
-		err := applyUpdateDispatchClusterUpdatableConfig(clusterBuilder, clusterAPIBuilder, properties, &updateDispatchClusterUpdatableConfig{
-			ExperimentalFeatures: updateDispatchClusterUpdatableConfigExperimentalFeatures{
+		err := (&clusterUpdateDispatchConfig{
+			ExperimentalFeatures: clusterUpdateDispatchConfigExperimentalFeatures{
 				ControlPlaneAvailability: api.SingleReplicaControlPlane,
 				ControlPlanePodSizing:    api.MinimalControlPlanePodSizing,
 			},
-		})
+		}).applyToCSBuilders(clusterBuilder, clusterAPIBuilder, properties)
 		require.NoError(t, err)
 		assert.Equal(t, map[string]string{
 			CSPropertySingleReplica: CSPropertyEnabled,
@@ -304,17 +330,17 @@ func TestApplyClusterUpdatableConfigExperimentalProperties(t *testing.T) {
 			CSPropertySizeOverride:  CSPropertyEnabled,
 			"other":                 "value",
 		}
-		err := applyUpdateDispatchClusterUpdatableConfig(clusterBuilder, clusterAPIBuilder, properties, &updateDispatchClusterUpdatableConfig{})
+		err := (&clusterUpdateDispatchConfig{}).applyToCSBuilders(clusterBuilder, clusterAPIBuilder, properties)
 		require.NoError(t, err)
 		assert.Equal(t, map[string]string{"other": "value"}, properties)
 	})
 
 	t.Run("nil properties is treated as empty map", func(t *testing.T) {
-		err := applyUpdateDispatchClusterUpdatableConfig(clusterBuilder, clusterAPIBuilder, nil, &updateDispatchClusterUpdatableConfig{
-			ExperimentalFeatures: updateDispatchClusterUpdatableConfigExperimentalFeatures{
+		err := (&clusterUpdateDispatchConfig{
+			ExperimentalFeatures: clusterUpdateDispatchConfigExperimentalFeatures{
 				ControlPlanePodSizing: api.MinimalControlPlanePodSizing,
 			},
-		})
+		}).applyToCSBuilders(clusterBuilder, clusterAPIBuilder, nil)
 		require.NoError(t, err)
 	})
 
@@ -323,12 +349,12 @@ func TestApplyClusterUpdatableConfigExperimentalProperties(t *testing.T) {
 			CSPropertySingleReplica: "false",
 			CSPropertySizeOverride:  "false",
 		}
-		err := applyUpdateDispatchClusterUpdatableConfig(clusterBuilder, clusterAPIBuilder, properties, &updateDispatchClusterUpdatableConfig{
-			ExperimentalFeatures: updateDispatchClusterUpdatableConfigExperimentalFeatures{
+		err := (&clusterUpdateDispatchConfig{
+			ExperimentalFeatures: clusterUpdateDispatchConfigExperimentalFeatures{
 				ControlPlaneAvailability: api.SingleReplicaControlPlane,
 				ControlPlanePodSizing:    api.MinimalControlPlanePodSizing,
 			},
-		})
+		}).applyToCSBuilders(clusterBuilder, clusterAPIBuilder, properties)
 		require.NoError(t, err)
 		assert.Equal(t, map[string]string{
 			CSPropertySingleReplica: CSPropertyEnabled,
