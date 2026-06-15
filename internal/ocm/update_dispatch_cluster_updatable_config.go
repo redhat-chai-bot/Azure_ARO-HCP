@@ -51,8 +51,8 @@ type updateDispatchClusterUpdatableConfig struct {
 	NodeDrainTimeoutMinutes     int32                                                    `json:"nodeDrainTimeoutMinutes,omitempty"`
 	K8sAPIServerAuthorizedCIDRs []string                                                 `json:"k8sAPIServerAuthorizedCIDRs,omitempty"`
 	ImageDigestMirrors          []updateDispatchClusterUpdatableConfigImageDigestMirror  `json:"imageDigestMirrors,omitempty"`
-	Autoscaling                 updateDispatchClusterUpdatableConfigAutoscaling          `json:"autoscaling,omitzero"`
-	ExperimentalFeatures        updateDispatchClusterUpdatableConfigExperimentalFeatures `json:"experimentalFeatures,omitzero"`
+	Autoscaling                 updateDispatchClusterUpdatableConfigAutoscaling          `json:"autoscaling,omitempty"`
+	ExperimentalFeatures        updateDispatchClusterUpdatableConfigExperimentalFeatures `json:"experimentalFeatures,omitempty"`
 }
 
 // updateDispatchClusterUpdatableConfigImageDigestMirror is the curated image mirror subset hashed
@@ -94,66 +94,90 @@ func UpdateDispatchClusterUpdatableConfigFromCluster(cluster *api.HCPOpenShiftCl
 	}
 }
 
+func convertNodeDrainTimeoutCStoRP(in *arohcpv1alpha1.Cluster) int32 {
+	if nodeDrainGracePeriod, ok := in.GetNodeDrainGracePeriod(); ok {
+		if unit, ok := nodeDrainGracePeriod.GetUnit(); ok && unit == csNodeDrainGracePeriodUnit {
+			return int32(nodeDrainGracePeriod.Value())
+		}
+	}
+	return 0
+}
+
+func convertK8sAPIServerAuthorizedCIDRsCStoRP(in *arohcpv1alpha1.ClusterAPI) []string {
+	cidrAccess := in.CIDRBlockAccess()
+	if cidrAccess.Empty() {
+		return nil
+	}
+	if cidr := cidrAccess.Allow(); cidr != nil {
+		return cidr.Values()
+	}
+	return nil
+}
+
+func convertImageDigestMirrorsCStoRP(in *arohcpv1alpha1.ClusterRegistryConfig) []updateDispatchClusterUpdatableConfigImageDigestMirror {
+	if in == nil {
+		return nil
+	}
+	imageDigestMirrors := in.ImageDigestMirrors()
+	if len(imageDigestMirrors) == 0 {
+		return nil
+	}
+
+	out := make([]updateDispatchClusterUpdatableConfigImageDigestMirror, 0, len(imageDigestMirrors))
+	for _, mirror := range imageDigestMirrors {
+		source, sourceOK := mirror.GetSource()
+		if !sourceOK {
+			continue
+		}
+		item := updateDispatchClusterUpdatableConfigImageDigestMirror{Source: source}
+
+		mirrors, mirrorsOK := mirror.GetMirrors()
+		if mirrorsOK {
+			item.Mirrors = append([]string(nil), mirrors...)
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func convertExperimentalFeaturesCStoRP(in *arohcpv1alpha1.Cluster) updateDispatchClusterUpdatableConfigExperimentalFeatures {
+	if in == nil {
+		return updateDispatchClusterUpdatableConfigExperimentalFeatures{}
+	}
+
+	out := updateDispatchClusterUpdatableConfigExperimentalFeatures{}
+
+	for key, value := range in.Properties() {
+		switch key {
+		case CSPropertySingleReplica:
+			if value == CSPropertyEnabled {
+				out.ControlPlaneAvailability = api.SingleReplicaControlPlane
+			}
+		case CSPropertySizeOverride:
+			if value == CSPropertyEnabled {
+				out.ControlPlanePodSizing = api.MinimalControlPlanePodSizing
+			}
+		}
+	}
+
+	return out
+}
+
 // UpdateDispatchClusterUpdatableConfigFromClusterServiceCluster extracts the canonical updatable
 // cluster configuration from a Cluster Service cluster object.
 func UpdateDispatchClusterUpdatableConfigFromClusterServiceCluster(csCluster *arohcpv1alpha1.Cluster) (*updateDispatchClusterUpdatableConfig, error) {
 	config := &updateDispatchClusterUpdatableConfig{}
 
-	if nodeDrainGracePeriod := csCluster.NodeDrainGracePeriod(); nodeDrainGracePeriod != nil {
-		value, ok := nodeDrainGracePeriod.GetValue()
-		if !ok {
-			return nil, utils.TrackError(fmt.Errorf("node drain grace period value is missing"))
-		}
-		config.NodeDrainTimeoutMinutes = int32(value)
-	}
+	config.NodeDrainTimeoutMinutes = convertNodeDrainTimeoutCStoRP(csCluster)
+	config.K8sAPIServerAuthorizedCIDRs = convertK8sAPIServerAuthorizedCIDRsCStoRP(csCluster.API())
+	config.ImageDigestMirrors = convertImageDigestMirrorsCStoRP(csCluster.RegistryConfig())
+	config.ExperimentalFeatures = convertExperimentalFeaturesCStoRP(csCluster)
 
-	if clusterAPI := csCluster.API(); clusterAPI != nil {
-		authorizedCIDRs, err := authorizedCIDRsFromClusterServiceAPI(clusterAPI)
-		if err != nil {
-			return nil, err
-		}
-		config.K8sAPIServerAuthorizedCIDRs = authorizedCIDRs
+	autoscaling, err := convertCSAutoscalerToUpdatableConfig(csCluster.Autoscaler())
+	if err != nil {
+		return nil, err
 	}
-
-	if registryConfig := csCluster.RegistryConfig(); registryConfig != nil {
-		imageDigestMirrors, ok := registryConfig.GetImageDigestMirrors()
-		if ok && len(imageDigestMirrors) > 0 {
-			config.ImageDigestMirrors = make([]updateDispatchClusterUpdatableConfigImageDigestMirror, 0, len(imageDigestMirrors))
-			for _, mirror := range imageDigestMirrors {
-				source, sourceOK := mirror.GetSource()
-				mirrors, mirrorsOK := mirror.GetMirrors()
-				if !sourceOK {
-					continue
-				}
-				item := updateDispatchClusterUpdatableConfigImageDigestMirror{Source: source}
-				if mirrorsOK {
-					item.Mirrors = append([]string(nil), mirrors...)
-				}
-				config.ImageDigestMirrors = append(config.ImageDigestMirrors, item)
-			}
-		}
-	}
-
-	for key, value := range csCluster.Properties() {
-		switch key {
-		case CSPropertySingleReplica:
-			if value == CSPropertyEnabled {
-				config.ExperimentalFeatures.ControlPlaneAvailability = api.SingleReplicaControlPlane
-			}
-		case CSPropertySizeOverride:
-			if value == CSPropertyEnabled {
-				config.ExperimentalFeatures.ControlPlanePodSizing = api.MinimalControlPlanePodSizing
-			}
-		}
-	}
-
-	if autoscaler := csCluster.Autoscaler(); autoscaler != nil {
-		autoscaling, err := convertCSAutoscalerToUpdatableConfig(autoscaler)
-		if err != nil {
-			return nil, err
-		}
-		config.Autoscaling = autoscaling
-	}
+	config.Autoscaling = autoscaling
 
 	return config, nil
 }
@@ -192,36 +216,6 @@ func updateDispatchClusterUpdatableConfigHash(config *updateDispatchClusterUpdat
 
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:]), nil
-}
-
-func authorizedCIDRsFromClusterServiceAPI(clusterAPI *arohcpv1alpha1.ClusterAPI) ([]string, error) {
-	cidrBlockAccess, ok := clusterAPI.GetCIDRBlockAccess()
-	if !ok || cidrBlockAccess == nil {
-		return nil, nil
-	}
-
-	allow, ok := cidrBlockAccess.GetAllow()
-	if !ok || allow == nil {
-		return nil, nil
-	}
-
-	mode, ok := allow.GetMode()
-	if !ok {
-		return nil, nil
-	}
-
-	switch mode {
-	case csCIDRBlockAllowAccessModeAllowAll:
-		return nil, nil
-	case csCIDRBlockAllowAccessModeAllowList:
-		values, ok := allow.GetValues()
-		if !ok {
-			return nil, utils.TrackError(fmt.Errorf("CIDR block allow list mode is missing values"))
-		}
-		return append([]string(nil), values...), nil
-	default:
-		return nil, utils.TrackError(fmt.Errorf("unknown CIDR block allow access mode %q", mode))
-	}
 }
 
 func imageDigestMirrorsFromAPI(mirrors []api.ImageDigestMirror) []updateDispatchClusterUpdatableConfigImageDigestMirror {
@@ -272,32 +266,30 @@ func autoscalingToAPI(profile updateDispatchClusterUpdatableConfigAutoscaling) a
 	}
 }
 
-func convertCSAutoscalerToUpdatableConfig(autoscaler *arohcpv1alpha1.ClusterAutoscaler) (updateDispatchClusterUpdatableConfigAutoscaling, error) {
-	profile := updateDispatchClusterUpdatableConfigAutoscaling{}
+func convertCSAutoscalerToUpdatableConfig(in *arohcpv1alpha1.ClusterAutoscaler) (updateDispatchClusterUpdatableConfigAutoscaling, error) {
+	if in == nil {
+		return updateDispatchClusterUpdatableConfigAutoscaling{}, nil
+	}
 
-	if maxNodeProvisionTime, ok := autoscaler.GetMaxNodeProvisionTime(); ok && maxNodeProvisionTime != "" {
-		duration, err := time.ParseDuration(maxNodeProvisionTime)
+	var maxNodeProvisionTime int32
+	if len(in.MaxNodeProvisionTime()) > 0 {
+		// maxNodeProvisionTime (string) - minutes e.g - “15m”
+		// https://gitlab.cee.redhat.com/service/uhc-clusters-service/-/blob/master/pkg/api/autoscaler.go?ref_type=heads#L30-42
+		maxNodeProvisionTimeDuration, err := time.ParseDuration(in.MaxNodeProvisionTime())
 		if err != nil {
-			return profile, utils.TrackError(fmt.Errorf("failed to parse max node provision time %q: %w", maxNodeProvisionTime, err))
+			return updateDispatchClusterUpdatableConfigAutoscaling{}, err
 		}
-		profile.MaxNodeProvisionTimeSeconds = int32(duration.Seconds())
+		maxNodeProvisionTime = int32(maxNodeProvisionTimeDuration.Seconds())
 	}
 
-	if maxPodGracePeriod, ok := autoscaler.GetMaxPodGracePeriod(); ok {
-		profile.MaxPodGracePeriodSeconds = int32(maxPodGracePeriod)
-	}
-
-	if podPriorityThreshold, ok := autoscaler.GetPodPriorityThreshold(); ok {
-		profile.PodPriorityThreshold = int32(podPriorityThreshold)
-	}
-
-	if resourceLimits, ok := autoscaler.GetResourceLimits(); ok && resourceLimits != nil {
-		if maxNodesTotal, ok := resourceLimits.GetMaxNodesTotal(); ok {
-			profile.MaxNodesTotal = int32(maxNodesTotal)
-		}
-	}
-
-	return profile, nil
+	return updateDispatchClusterUpdatableConfigAutoscaling{
+		MaxNodesTotal: int32(in.ResourceLimits().MaxNodesTotal()),
+		// MaxPodGracePeriod (int) - seconds e.g - 300
+		// https://gitlab.cee.redhat.com/service/uhc-clusters-service/-/blob/master/pkg/api/autoscaler.go?ref_type=heads#L30-42
+		MaxPodGracePeriodSeconds:    int32(in.MaxPodGracePeriod()),
+		MaxNodeProvisionTimeSeconds: maxNodeProvisionTime,
+		PodPriorityThreshold:        int32(in.PodPriorityThreshold()),
+	}, nil
 }
 
 // updateDispatchClusterUpdatableConfigJSONForHash returns canonical JSON for hashing. The struct
