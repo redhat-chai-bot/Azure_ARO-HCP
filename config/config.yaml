@@ -940,13 +940,13 @@ defaults:
     operator:
       bundle:
         registry: quay.io
-        repository: redhat-user-workloads/crt-redhat-acm-tenant/acm-operator-bundle-acm-216
-        digest: sha256:f277cbf67c91f3b0c5578dc4f4c78f9c71f2d61597a7bd43331092cec278c89f # 116abe2f16a198818cc73e251e21c6690d1cffb9 (2026-06-09 18:35)
+        repository: redhat-user-workloads/crt-redhat-acm-tenant/acm-operator-bundle-acm-217
+        digest: sha256:d76281038c5b0eb02d6a86181767535a7a5ce0fb9c99f55b9397e37ac8edb766 # 61169f58bfaf152511e0e76b5f7cdb31286df05b (2026-06-16 04:29)
     mce:
       bundle:
         registry: quay.io
-        repository: redhat-user-workloads/crt-redhat-acm-tenant/mce-operator-bundle-mce-211
-        digest: sha256:beb1ebcf6243a1bf78eb8760cf1fbda2336b8f218a3a7e3884ed3c6864d7ef69 # v2.11.2-506 (2026-06-08 11:42)
+        repository: redhat-user-workloads/crt-redhat-acm-tenant/mce-operator-bundle-mce-217
+        digest: sha256:9cc9a80ab604a3dbeb350df5548e1e87f7b07c7e98692156fcfa63201b657c68 # 909dcb2f77098cebe5feb4c9c76dd24f909e6652 (2026-06-15 21:55)
   # Cluster Service
   clustersService:
     image:
