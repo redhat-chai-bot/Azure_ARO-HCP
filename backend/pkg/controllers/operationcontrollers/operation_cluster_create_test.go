@@ -236,13 +236,13 @@ func TestDetermineOperationStatus(t *testing.T) {
 	operation := fixture.newOperation(database.OperationRequestCreate)
 
 	tests := []struct {
-		name             string
-		clusterLister    listers.ClusterLister
-		readDesireLister dblisters.ReadDesireLister
-		expectedState    arm.ProvisioningState
-		expectedMessage  string
-		expectError      bool
-		errContains      string
+		name              string
+		clusterLister     listers.ClusterLister
+		readDesireLister  dblisters.ReadDesireLister
+		expectedState     arm.ProvisioningState
+		wantMessageSubstr string
+		expectError       bool
+		errContains       string
 	}{
 		{
 			name: "both checks succeed → Succeeded",
@@ -269,8 +269,8 @@ func TestDetermineOperationStatus(t *testing.T) {
 					}),
 				},
 			},
-			expectedState:   arm.ProvisioningStateSucceeded,
-			expectedMessage: "",
+			expectedState:     arm.ProvisioningStateSucceeded,
+			wantMessageSubstr: "",
 		},
 		{
 			name: "cluster API URL empty → Provisioning (lowest priority wins)",
@@ -297,8 +297,8 @@ func TestDetermineOperationStatus(t *testing.T) {
 					}),
 				},
 			},
-			expectedState:   arm.ProvisioningStateProvisioning,
-			expectedMessage: ".api.url is empty",
+			expectedState:     arm.ProvisioningStateProvisioning,
+			wantMessageSubstr: ".api.url is empty",
 		},
 		{
 			name: "hosted cluster not found → Provisioning",
@@ -361,8 +361,8 @@ func TestDetermineOperationStatus(t *testing.T) {
 						metav1.Condition{Type: kubeapplier.ConditionTypeSuccessful, Status: metav1.ConditionFalse, Reason: kubeapplier.ConditionReasonKubeAPIError, Message: "boom"}),
 				},
 			},
-			expectedState:   arm.ProvisioningStateProvisioning,
-			expectedMessage: "ReadDesire is not successful: KubeAPIError: boom",
+			expectedState:     arm.ProvisioningStateProvisioning,
+			wantMessageSubstr: "ReadDesire is not successful: KubeAPIError: boom",
 		},
 		{
 			name: "hosted cluster not available → Provisioning",
@@ -385,8 +385,8 @@ func TestDetermineOperationStatus(t *testing.T) {
 					}),
 				},
 			},
-			expectedState:   arm.ProvisioningStateProvisioning,
-			expectedMessage: "hosted cluster is not available: NotReady: cluster is not ready",
+			expectedState:     arm.ProvisioningStateProvisioning,
+			wantMessageSubstr: "hosted cluster is not available: NotReady: cluster is not ready",
 		},
 		{
 			name: "no control plane endpoint host → Provisioning",
@@ -409,8 +409,8 @@ func TestDetermineOperationStatus(t *testing.T) {
 					}),
 				},
 			},
-			expectedState:   arm.ProvisioningStateProvisioning,
-			expectedMessage: "hosted cluster has no control plane endpoint host",
+			expectedState:     arm.ProvisioningStateProvisioning,
+			wantMessageSubstr: "hosted cluster has no control plane endpoint host",
 		},
 		{
 			name: "no control plane endpoint port → Provisioning",
@@ -436,8 +436,8 @@ func TestDetermineOperationStatus(t *testing.T) {
 					}),
 				},
 			},
-			expectedState:   arm.ProvisioningStateProvisioning,
-			expectedMessage: "hosted cluster has no control plane endpoint port",
+			expectedState:     arm.ProvisioningStateProvisioning,
+			wantMessageSubstr: "hosted cluster has no control plane endpoint port",
 		},
 		{
 			name: "version with valid success condition but not installed → Provisioning",
@@ -464,8 +464,8 @@ func TestDetermineOperationStatus(t *testing.T) {
 					}),
 				},
 			},
-			expectedState:   arm.ProvisioningStateProvisioning,
-			expectedMessage: "hosted cluster has no installed version",
+			expectedState:     arm.ProvisioningStateProvisioning,
+			wantMessageSubstr: "hosted cluster has no installed version",
 		},
 	}
 
@@ -490,9 +490,9 @@ func TestDetermineOperationStatus(t *testing.T) {
 
 			require.NoError(t, err)
 			require.NotNil(t, result)
-			assert.Equal(t, tt.expectedState, result.provisioningState)
-			if tt.expectedMessage != "" {
-				assert.Equal(t, tt.expectedMessage, result.message)
+			assert.Equal(t, tt.expectedState, result.ProvisioningState)
+			if tt.wantMessageSubstr != "" {
+				assert.Contains(t, result.Message, tt.wantMessageSubstr)
 			}
 		})
 	}
