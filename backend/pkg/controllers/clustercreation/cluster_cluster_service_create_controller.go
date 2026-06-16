@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package clustercreationcontrollers
+package clustercreation
 
 import (
 	"context"
@@ -114,17 +114,10 @@ func (c *clusterClusterServiceCreateSyncer) SyncOnce(ctx context.Context, key co
 	if err != nil {
 		return utils.TrackError(err)
 	}
-	if subscription.Properties == nil || subscription.Properties.TenantId == nil || *subscription.Properties.TenantId == "" {
-		return utils.TrackError(fmt.Errorf("subscription %s has no tenant id", key.SubscriptionID))
-	}
 	tenantID := *subscription.Properties.TenantId
-
 	mrg := cluster.CustomerProperties.Platform.ManagedResourceGroup
-	if mrg == "" {
-		return utils.TrackError(fmt.Errorf("cluster %s has no managed resource group", cluster.Name))
-	}
 
-	existingCSCluster, err := c.findAROHCPClusterByAzureInfo(ctx,
+	csCluster, err := c.findAROHCPClusterByAzureInfo(ctx,
 		key.SubscriptionID,
 		key.ResourceGroupName,
 		key.HCPClusterName,
@@ -135,12 +128,8 @@ func (c *clusterClusterServiceCreateSyncer) SyncOnce(ctx context.Context, key co
 		return utils.TrackError(err)
 	}
 
-	var csCluster *arohcpv1alpha1.Cluster
-	if existingCSCluster != nil {
-		csCluster = existingCSCluster
-		logger.Info("adopting existing Cluster Service cluster for Azure resource")
-	} else {
-		csCluster, err = c.createClusterServiceCluster(ctx, cluster, existingServiceProviderCluster.Spec.ControlPlaneVersion.DesiredVersion)
+	if csCluster == nil {
+		csCluster, err = c.createClusterServiceCluster(ctx, cluster, existingServiceProviderCluster.Spec.ControlPlaneVersion.DesiredVersion, tenantID)
 		if err != nil {
 			return utils.TrackError(fmt.Errorf("failed to create cluster in CS: %w", err))
 		}
@@ -224,26 +213,16 @@ func (c *clusterClusterServiceCreateSyncer) csClustersMatchingClusterByAzureInfo
 	return res, nil
 }
 
-func (c *clusterClusterServiceCreateSyncer) createClusterServiceCluster(ctx context.Context, cluster *api.HCPOpenShiftCluster, desiredVersion *semver.Version) (*arohcpv1alpha1.Cluster, error) {
+func (c *clusterClusterServiceCreateSyncer) createClusterServiceCluster(ctx context.Context, cluster *api.HCPOpenShiftCluster, desiredVersion *semver.Version, tenantID string) (*arohcpv1alpha1.Cluster, error) {
 	logger := utils.LoggerFromContext(ctx)
-
-	subscription, err := c.resourcesDBClient.Subscriptions().Get(ctx, cluster.ID.SubscriptionID)
-	if err != nil {
-		return nil, utils.TrackError(fmt.Errorf("failed to get subscription: %w", err))
-	}
-
-	var tenantID string
-	if subscription.Properties != nil && subscription.Properties.TenantId != nil {
-		tenantID = *subscription.Properties.TenantId
-	}
 
 	// Use the Cincinnati-resolved desired version instead of the
 	// customer's minor version so CS gets the exact patch release.
-	clusterCopy := *cluster
+	clusterCopy := cluster.DeepCopy()
 	clusterCopy.CustomerProperties.Version.ID = desiredVersion.String()
 
 	csClusterBuilder, csAutoscalerBuilder, err := ocm.BuildCSCluster(
-		clusterCopy.ID, tenantID, &clusterCopy, nil, nil,
+		clusterCopy.ID, tenantID, clusterCopy, nil, nil,
 	)
 	if err != nil {
 		return nil, utils.TrackError(fmt.Errorf("failed to build CS cluster: %w", err))

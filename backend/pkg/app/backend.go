@@ -37,7 +37,7 @@ import (
 	azureclient "github.com/Azure/ARO-HCP/backend/pkg/azure/client"
 	"github.com/Azure/ARO-HCP/backend/pkg/controllers"
 	"github.com/Azure/ARO-HCP/backend/pkg/controllers/billingcontrollers"
-	clustercreationcontrollers "github.com/Azure/ARO-HCP/backend/pkg/controllers/clustercreation"
+	"github.com/Azure/ARO-HCP/backend/pkg/controllers/clustercreation"
 	"github.com/Azure/ARO-HCP/backend/pkg/controllers/clusterdeletion"
 	"github.com/Azure/ARO-HCP/backend/pkg/controllers/clusterpropertiescontroller"
 	"github.com/Azure/ARO-HCP/backend/pkg/controllers/controllerutils"
@@ -432,12 +432,6 @@ func (b *Backend) runBackendControllersUnderLeaderElection(ctx context.Context, 
 		b.options.ClustersServiceClient,
 		activeOperationInformer,
 	)
-	clusterClusterServiceCreateController := clustercreationcontrollers.NewClusterClusterServiceCreateController(
-		b.options.ResourcesDBClient,
-		b.options.ClustersServiceClient,
-		activeOperationLister,
-		backendInformers,
-	)
 	operationClusterCreateController := operationcontrollers.NewOperationClusterCreateController(
 		b.clock,
 		b.options.ResourcesDBClient,
@@ -700,6 +694,13 @@ func (b *Backend) runBackendControllersUnderLeaderElection(ctx context.Context, 
 
 	externalAuthDeletionController := externalauthdeletion.NewExternalAuthDeletionController(
 		b.options.ResourcesDBClient,
+		activeOperationLister,
+		backendInformers,
+	)
+
+	clusterClusterServiceCreateController := clustercreation.NewClusterClusterServiceCreateController(
+		b.options.ResourcesDBClient,
+		b.options.ClustersServiceClient,
 		activeOperationLister,
 		backendInformers,
 	)

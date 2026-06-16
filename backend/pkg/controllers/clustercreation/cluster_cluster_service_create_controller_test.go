@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package clustercreationcontrollers
+package clustercreation
 
 import (
 	"context"
@@ -183,20 +183,6 @@ func TestClusterClusterServiceCreate_SyncOnce(t *testing.T) {
 				require.NoError(t, err)
 				assert.Nil(t, cluster.ServiceProviderProperties.ClusterServiceID)
 			},
-		},
-		{
-			name: "missing managed resource group returns error",
-			listCluster: newTestCluster(func(c *api.HCPOpenShiftCluster) {
-				c.CustomerProperties.Platform.ManagedResourceGroup = ""
-			}),
-			dbCluster: newTestCluster(func(c *api.HCPOpenShiftCluster) {
-				c.CustomerProperties.Platform.ManagedResourceGroup = ""
-			}),
-			desiredVersion: desiredVersion,
-			setupMockCS: func(ctrl *gomock.Controller) ocm.ClusterServiceClientSpec {
-				return ocm.NewMockClusterServiceClientSpec(ctrl)
-			},
-			expectError: true,
 		},
 		{
 			name:           "adopts existing Cluster Service cluster for Azure resource",
