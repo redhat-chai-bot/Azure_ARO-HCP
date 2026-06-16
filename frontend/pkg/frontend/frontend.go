@@ -16,7 +16,9 @@ package frontend
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"net"
@@ -36,7 +38,6 @@ import (
 	azcorearm "github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
 
 	arohcpv1alpha1 "github.com/openshift-online/ocm-sdk-go/arohcp/v1alpha1"
-	cmv1 "github.com/openshift-online/ocm-sdk-go/clustersmgmt/v1"
 
 	"github.com/Azure/ARO-HCP/frontend/pkg/metrics"
 	"github.com/Azure/ARO-HCP/internal/admission"
@@ -47,6 +48,7 @@ import (
 	"github.com/Azure/ARO-HCP/internal/audit"
 	"github.com/Azure/ARO-HCP/internal/database"
 	"github.com/Azure/ARO-HCP/internal/ocm"
+	"github.com/Azure/ARO-HCP/internal/systemadmincredential"
 	"github.com/Azure/ARO-HCP/internal/utils"
 	"github.com/Azure/ARO-HCP/internal/utils/armhelpers"
 	"github.com/Azure/ARO-HCP/internal/validation"
@@ -1011,13 +1013,13 @@ func (f *Frontend) OperationResult(writer http.ResponseWriter, request *http.Req
 	var responseBody []byte
 
 	switch {
-	case operation.InternalID.Kind() == cmv1.BreakGlassCredentialKind:
-		csBreakGlassCredential, err := f.clusterServiceClient.GetBreakGlassCredential(ctx, operation.InternalID)
+	case operation.Request == database.OperationRequestRequestCredential:
+		adminCred, err := f.buildAdminCredentialFromDB(ctx, operation)
 		if err != nil {
 			return utils.TrackError(err)
 		}
 
-		responseBody, err = versionedInterface.MarshalHCPOpenShiftClusterAdminCredential(ocm.ConvertCStoAdminCredential(csBreakGlassCredential))
+		responseBody, err = versionedInterface.MarshalHCPOpenShiftClusterAdminCredential(adminCred)
 		if err != nil {
 			return utils.TrackError(err)
 		}
@@ -1061,6 +1063,86 @@ func (f *Frontend) OperationResult(writer http.ResponseWriter, request *http.Req
 		return utils.TrackError(err)
 	}
 	return nil
+}
+
+// buildAdminCredentialFromDB assembles an HCPOpenShiftClusterAdminCredential
+// from the SystemAdminCredential Cosmos document matching the given operation.
+func (f *Frontend) buildAdminCredentialFromDB(ctx context.Context, op *api.Operation) (*api.HCPOpenShiftClusterAdminCredential, error) {
+	credCRUD := f.resourcesDBClient.HCPClusters(
+		op.ExternalID.SubscriptionID,
+		op.ExternalID.ResourceGroupName,
+	).SystemAdminCredentials(op.ExternalID.Name)
+
+	iter, err := credCRUD.List(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("listing SystemAdminCredentials: %w", err)
+	}
+
+	var cred *api.SystemAdminCredential
+	for c, iterErr := range iter.Items(ctx) {
+		if iterErr != nil {
+			return nil, fmt.Errorf("iterating SystemAdminCredentials: %w", iterErr)
+		}
+		if c.Spec.OperationID == op.OperationID.Name {
+			cred = c
+			break
+		}
+	}
+	if cred == nil {
+		return nil, fmt.Errorf("no SystemAdminCredential found for operation %s", op.OperationID.Name)
+	}
+
+	// If the signed certificate is not yet populated the credential has not
+	// been issued — return an empty kubeconfig so the caller treats it as
+	// not-ready.
+	if cred.Status.SignedCertificate == "" {
+		return &api.HCPOpenShiftClusterAdminCredential{
+			ExpirationTimestamp: cred.Spec.ExpirationTimestamp.Time,
+		}, nil
+	}
+
+	// Decode base64-DER → PEM CERTIFICATE block.
+	derBytes, err := base64.StdEncoding.DecodeString(cred.Status.SignedCertificate)
+	if err != nil {
+		return nil, fmt.Errorf("decoding signed certificate base64: %w", err)
+	}
+	signedCertPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: derBytes,
+	})
+
+	// Fetch the CA bundle from ServiceProviderCluster.
+	spc, err := database.GetOrCreateServiceProviderCluster(ctx, f.resourcesDBClient, op.ExternalID)
+	if err != nil {
+		return nil, fmt.Errorf("get ServiceProviderCluster: %w", err)
+	}
+	caBundlePEM := spc.Status.ServingCABundle
+
+	// Fetch the cluster doc for the API URL.
+	cluster, err := f.resourcesDBClient.HCPClusters(
+		op.ExternalID.SubscriptionID,
+		op.ExternalID.ResourceGroupName,
+	).Get(ctx, op.ExternalID.Name)
+	if err != nil {
+		return nil, fmt.Errorf("get cluster: %w", err)
+	}
+	apiURL := cluster.ServiceProviderProperties.API.URL
+
+	kubeconfigBytes, err := systemadmincredential.BuildKubeconfig(
+		op.ExternalID.Name,
+		apiURL,
+		caBundlePEM,
+		string(signedCertPEM),
+		cred.Spec.PrivateKeyPEM,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("building kubeconfig: %w", err)
+	}
+
+	return &api.HCPOpenShiftClusterAdminCredential{
+		ExpirationTimestamp: cred.Spec.ExpirationTimestamp.Time,
+		Kubeconfig:          string(kubeconfigBytes),
+	}, nil
 }
 
 func featuresMap(features *[]arm.Feature) map[string]string {

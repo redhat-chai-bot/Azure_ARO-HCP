@@ -77,6 +77,7 @@ const (
 	RequestAdminCredentialActionTypeName     = "requestadmincredential"
 	RevokeAdminCredentialsActionTypeName     = "revokecredentials"
 	ManagementClusterContentResourceTypeName = "managementClusterContents"
+	SystemAdminCredentialResourceTypeName    = "systemAdminCredentials"
 	ResourceTypeDisplay                      = "Hosted Control Plane (HCP) OpenShift Clusters"
 )
 
@@ -98,6 +99,7 @@ var (
 	ClusterScopedManagementClusterContentResourceType = azcorearm.NewResourceType(ProviderNamespace, filepath.Join(ClusterResourceTypeName, ManagementClusterContentResourceTypeName))
 	// NodePoolScopedManagementClusterContentResourceType is managementClusterContents nested under a Node Pool
 	NodePoolScopedManagementClusterContentResourceType = azcorearm.NewResourceType(ProviderNamespace, filepath.Join(ClusterResourceTypeName, NodePoolResourceTypeName, ManagementClusterContentResourceTypeName))
+	SystemAdminCredentialResourceType                   = azcorearm.NewResourceType(ProviderNamespace, ClusterResourceTypeName+"/"+SystemAdminCredentialResourceTypeName)
 )
 
 type VersionedResource interface {
