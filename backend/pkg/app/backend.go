@@ -47,6 +47,7 @@ import (
 	"github.com/Azure/ARO-HCP/backend/pkg/controllers/mismatchcontrollers"
 	"github.com/Azure/ARO-HCP/backend/pkg/controllers/nodepooldeletion"
 	"github.com/Azure/ARO-HCP/backend/pkg/controllers/operationcontrollers"
+	"github.com/Azure/ARO-HCP/backend/pkg/controllers/systemadmincredentialcontrollers"
 	"github.com/Azure/ARO-HCP/backend/pkg/controllers/upgradecontrollers"
 	"github.com/Azure/ARO-HCP/backend/pkg/controllers/validationcontrollers"
 	"github.com/Azure/ARO-HCP/backend/pkg/controllers/validationcontrollers/validations"
@@ -530,6 +531,30 @@ func (b *Backend) runBackendControllersUnderLeaderElection(ctx context.Context, 
 	createBillingDocController := controllerutils.NewClusterWatchingController(
 		"CreateBillingDoc", b.options.ResourcesDBClient, backendInformers, unionKubeApplierInformers, 60*time.Second,
 		billingcontrollers.NewCreateBillingDocController(b.clock, b.options.AzureLocation, b.options.ResourcesDBClient, b.options.BillingDBClient, clusterLister, billingLister))
+
+	// SystemAdminCredential controllers
+	sacDesiresCreatorController := controllerutils.NewClusterWatchingController(
+		"SACDesiresCreator", b.options.ResourcesDBClient, backendInformers, unionKubeApplierInformers, 60*time.Second,
+		systemadmincredentialcontrollers.NewDesiresCreator(b.options.ResourcesDBClient, b.options.KubeApplierDBClients, b.options.MaestroSourceEnvironmentIdentifier))
+	sacIssuanceObserverController := controllerutils.NewClusterWatchingController(
+		"SACIssuanceObserver", b.options.ResourcesDBClient, backendInformers, unionKubeApplierInformers, 60*time.Second,
+		systemadmincredentialcontrollers.NewIssuanceObserver(b.options.ResourcesDBClient, b.options.KubeApplierDBClients))
+	sacPostIssuanceCleanupController := controllerutils.NewClusterWatchingController(
+		"SACPostIssuanceCleanup", b.options.ResourcesDBClient, backendInformers, nil, 5*time.Minute,
+		systemadmincredentialcontrollers.NewPostIssuanceCleanup(b.options.ResourcesDBClient, b.options.KubeApplierDBClients, b.options.MaestroSourceEnvironmentIdentifier))
+	sacClusterDeletionCleanupController := controllerutils.NewClusterWatchingController(
+		"SACClusterDeletionCleanup", b.options.ResourcesDBClient, backendInformers, nil, 5*time.Minute,
+		systemadmincredentialcontrollers.NewClusterDeletionCleanup(b.options.ResourcesDBClient, b.options.KubeApplierDBClients, b.options.MaestroSourceEnvironmentIdentifier))
+	sacServingCAReadDesireCreatorController := controllerutils.NewClusterWatchingController(
+		"SACServingCAReadDesireCreator", b.options.ResourcesDBClient, backendInformers, nil, 5*time.Minute,
+		systemadmincredentialcontrollers.NewServingCAReadDesireCreator(b.options.ResourcesDBClient, b.options.KubeApplierDBClients, b.options.MaestroSourceEnvironmentIdentifier))
+	sacCABundleSyncController := controllerutils.NewClusterWatchingController(
+		"SACCABundleSync", b.options.ResourcesDBClient, backendInformers, unionKubeApplierInformers, 60*time.Second,
+		systemadmincredentialcontrollers.NewCABundleSync(b.options.ResourcesDBClient, b.options.KubeApplierDBClients, b.options.MaestroSourceEnvironmentIdentifier))
+	sacRevokedGCController := controllerutils.NewClusterWatchingController(
+		"SACRevokedGC", b.options.ResourcesDBClient, backendInformers, nil, 5*time.Minute,
+		systemadmincredentialcontrollers.NewRevokedGC(b.clock, b.options.ResourcesDBClient))
+
 	controlPlaneActiveVersionController := upgradecontrollers.NewControlPlaneActiveVersionController(
 		b.options.ResourcesDBClient,
 		activeOperationLister,
@@ -804,6 +829,13 @@ func (b *Backend) runBackendControllersUnderLeaderElection(ctx context.Context, 
 				go nodePoolMetricsController.Run(ctx, 1)
 				go externalAuthMetricsController.Run(ctx, 1)
 				go placementSyncController.Run(ctx, 20)
+				go sacDesiresCreatorController.Run(ctx, 20)
+				go sacIssuanceObserverController.Run(ctx, 20)
+				go sacPostIssuanceCleanupController.Run(ctx, 20)
+				go sacClusterDeletionCleanupController.Run(ctx, 20)
+				go sacServingCAReadDesireCreatorController.Run(ctx, 20)
+				go sacCABundleSyncController.Run(ctx, 20)
+				go sacRevokedGCController.Run(ctx, 20)
 			},
 			OnStoppedLeading: func() {
 				// This needs to be defined even though it does nothing.
