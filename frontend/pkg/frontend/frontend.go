@@ -1079,14 +1079,14 @@ func (f *Frontend) buildAdminCredentialFromDB(ctx context.Context, op *api.Opera
 	}
 
 	var cred *api.SystemAdminCredential
-	for c, iterErr := range iter.Items(ctx) {
-		if iterErr != nil {
-			return nil, fmt.Errorf("iterating SystemAdminCredentials: %w", iterErr)
-		}
+	for _, c := range iter.Items(ctx) {
 		if c.Spec.OperationID == op.OperationID.Name {
 			cred = c
 			break
 		}
+	}
+	if iterErr := iter.GetError(); iterErr != nil {
+		return nil, fmt.Errorf("iterating SystemAdminCredentials: %w", iterErr)
 	}
 	if cred == nil {
 		return nil, fmt.Errorf("no SystemAdminCredential found for operation %s", op.OperationID.Name)
