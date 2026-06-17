@@ -59,13 +59,13 @@ func TestServingCAReadDesireCreator_SyncCluster(t *testing.T) {
 	mcResourceID := newTestManagementClusterResourceID()
 
 	tests := []struct {
-		name           string
-		resources      []any
-		kaResources    []any
-		registerMC     bool
-		expectResult   int
-		expectError    bool
-		expectDesires  int // total documents in kube-applier after sync
+		name          string
+		resources     []any
+		kaResources   []any
+		registerMC    bool
+		expectResult  int
+		expectError   bool
+		expectDesires int // total documents in kube-applier after sync
 	}{
 		{
 			name: "creates serving-ca ReadDesire when absent",
