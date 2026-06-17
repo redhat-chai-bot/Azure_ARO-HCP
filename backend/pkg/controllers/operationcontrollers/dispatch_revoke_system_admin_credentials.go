@@ -138,11 +138,7 @@ func (c *dispatchRevokeSystemAdminCredentials) SynchronizeOperation(ctx context.
 	if err != nil {
 		return utils.TrackError(err)
 	}
-	now := c.clock.Now()
-	for cred, iterErr := range iter.Items(ctx) {
-		if iterErr != nil {
-			return utils.TrackError(iterErr)
-		}
+	for _, cred := range iter.Items(ctx) {
 		switch cred.Status.Phase {
 		case api.SystemAdminCredentialPhaseRequested,
 			api.SystemAdminCredentialPhaseIssued:
@@ -151,10 +147,13 @@ func (c *dispatchRevokeSystemAdminCredentials) SynchronizeOperation(ctx context.
 				return utils.TrackError(replaceErr)
 			}
 			logger.Info("marked credential as AwaitingRevocation",
-				"credential", cred.CosmosMetadata.ID)
+				"credential", cred.CosmosMetadata.ResourceID.Name)
 		default:
 			// Already revoked, failed, or awaiting — skip.
 		}
+	}
+	if err := iter.GetError(); err != nil {
+		return utils.TrackError(fmt.Errorf("iterating SystemAdminCredentials: %w", err))
 	}
 
 	// Write a CRR ApplyDesire to the kube-applier container so the MC

@@ -419,16 +419,16 @@ func (b *Backend) runBackendControllersUnderLeaderElection(ctx context.Context, 
 	billingDumpController := datadumpcontrollers.NewBillingDumpController(b.options.ResourcesDBClient, b.options.BillingDBClient, activeOperationLister, backendInformers, unionKubeApplierInformers)
 	managementClusterDumpController := datadumpcontrollers.NewManagementClusterDataDumpController(b.options.FleetDBClient, managementClusterLister, fleetInformers)
 	doNothingController := controllers.NewDoNothingExampleController(b.options.ResourcesDBClient, subscriptionLister)
-	dispatchRequestCredentialController := operationcontrollers.NewDispatchRequestCredentialController(
+	dispatchRequestCredentialController := operationcontrollers.NewDispatchSystemAdminCredentialController(
 		b.clock,
 		b.options.ResourcesDBClient,
-		b.options.ClustersServiceClient,
 		activeOperationInformer,
 	)
-	dispatchRevokeCredentialsController := operationcontrollers.NewDispatchRevokeCredentialsController(
+	dispatchRevokeCredentialsController := operationcontrollers.NewDispatchRevokeSystemAdminCredentialsController(
 		b.clock,
 		b.options.ResourcesDBClient,
-		b.options.ClustersServiceClient,
+		b.options.KubeApplierDBClients,
+		b.options.MaestroSourceEnvironmentIdentifier,
 		activeOperationInformer,
 	)
 	operationClusterCreateController := operationcontrollers.NewOperationClusterCreateController(
@@ -497,18 +497,18 @@ func (b *Backend) runBackendControllersUnderLeaderElection(ctx context.Context, 
 		http.DefaultClient,
 		activeOperationInformer,
 	)
-	operationRequestCredentialController := operationcontrollers.NewOperationRequestCredentialController(
+	operationRequestCredentialController := operationcontrollers.NewOperationSystemAdminCredentialController(
 		b.clock,
 		b.options.ResourcesDBClient,
-		b.options.ClustersServiceClient,
 		http.DefaultClient,
 		activeOperationInformer,
 	)
-	operationRevokeCredentialsController := operationcontrollers.NewOperationRevokeCredentialsController(
+	operationRevokeCredentialsController := operationcontrollers.NewOperationRevokeSystemAdminCredentialsController(
 		b.clock,
 		b.options.ResourcesDBClient,
-		b.options.ClustersServiceClient,
+		b.options.KubeApplierDBClients,
 		http.DefaultClient,
+		b.options.MaestroSourceEnvironmentIdentifier,
 		activeOperationInformer,
 	)
 	clusterServiceMatchingClusterController := mismatchcontrollers.NewClusterServiceClusterMatchingController(b.options.ResourcesDBClient, subscriptionLister, b.options.ClustersServiceClient)

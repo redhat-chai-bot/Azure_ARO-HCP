@@ -448,6 +448,18 @@ func (m *mockHCPClusterCRUD) Controllers(hcpClusterName string) database.Resourc
 	return newMockResourceCRUD[api.Controller, database.GenericDocument[api.Controller]](m.client, parentResourceID, api.ClusterControllerResourceType)
 }
 
+func (m *mockHCPClusterCRUD) SystemAdminCredentials(hcpClusterName string) database.ResourceCRUD[api.SystemAdminCredential] {
+	parentResourceID := api.Must(azcorearm.ParseResourceID(
+		path.Join(
+			m.parentResourceID.String(),
+			"providers",
+			m.resourceType.Namespace,
+			m.resourceType.Type,
+			hcpClusterName)))
+
+	return newMockResourceCRUD[api.SystemAdminCredential, database.GenericDocument[api.SystemAdminCredential]](m.client, parentResourceID, api.SystemAdminCredentialResourceType)
+}
+
 func (m *mockHCPClusterCRUD) ManagementClusterContents(hcpClusterName string) database.ManagementClusterContentCRUD {
 	parentResourceID := api.Must(azcorearm.ParseResourceID(
 		path.Join(

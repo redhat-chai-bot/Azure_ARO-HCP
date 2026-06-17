@@ -30,7 +30,6 @@ import (
 	"github.com/Azure/ARO-HCP/backend/pkg/controllers/controllerutils"
 	"github.com/Azure/ARO-HCP/internal/api"
 	"github.com/Azure/ARO-HCP/internal/api/arm"
-	"github.com/Azure/ARO-HCP/internal/api/kubeapplier"
 	"github.com/Azure/ARO-HCP/internal/database"
 	"github.com/Azure/ARO-HCP/internal/systemadmincredential"
 	"github.com/Azure/ARO-HCP/internal/utils"
@@ -131,10 +130,7 @@ func (c *operationRevokeSystemAdminCredentials) SynchronizeOperation(ctx context
 	if err != nil {
 		return utils.TrackError(err)
 	}
-	for cred, iterErr := range iter.Items(ctx) {
-		if iterErr != nil {
-			return utils.TrackError(iterErr)
-		}
+	for _, cred := range iter.Items(ctx) {
 		if cred.Status.Phase != api.SystemAdminCredentialPhaseAwaitingRevocation {
 			continue
 		}
@@ -148,7 +144,10 @@ func (c *operationRevokeSystemAdminCredentials) SynchronizeOperation(ctx context
 		if _, replaceErr := credCRUD.Replace(ctx, cred, nil); replaceErr != nil {
 			return utils.TrackError(replaceErr)
 		}
-		logger.Info("marked credential as Revoked", "credential", cred.CosmosMetadata.ID)
+		logger.Info("marked credential as Revoked", "credential", cred.CosmosMetadata.ResourceID.Name)
+	}
+	if err := iter.GetError(); err != nil {
+		return utils.TrackError(fmt.Errorf("iterating SystemAdminCredentials: %w", err))
 	}
 
 	// TODO(follow-up): per-credential CSR/CSRA/RBAC + CRR DeleteDesire teardown.

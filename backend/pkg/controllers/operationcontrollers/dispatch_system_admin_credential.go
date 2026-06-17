@@ -24,6 +24,8 @@ import (
 	"k8s.io/client-go/tools/cache"
 	utilsclock "k8s.io/utils/clock"
 
+	azcorearm "github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
+
 	"github.com/Azure/ARO-HCP/backend/pkg/controllers/controllerutils"
 	"github.com/Azure/ARO-HCP/internal/api"
 	"github.com/Azure/ARO-HCP/internal/database"
@@ -133,15 +135,12 @@ func (c *dispatchSystemAdminCredential) SynchronizeOperation(ctx context.Context
 	if err != nil {
 		return utils.TrackError(err)
 	}
-	for cred, iterErr := range iter.Items(ctx) {
-		if iterErr != nil {
-			return utils.TrackError(iterErr)
-		}
+	for _, cred := range iter.Items(ctx) {
 		if cred.Spec.OperationID == operation.OperationID.Name {
 			logger.Info("found existing credential for this operation, reusing",
-				"credential_name", cred.CosmosMetadata.ID)
+				"credential_name", cred.CosmosMetadata.ResourceID.Name)
 
-			credInternalID, idErr := credentialInternalID(cluster, cred.CosmosMetadata.ID)
+			credInternalID, idErr := credentialInternalID(cluster, cred.CosmosMetadata.ResourceID.Name)
 			if idErr != nil {
 				return utils.TrackError(idErr)
 			}
@@ -152,6 +151,9 @@ func (c *dispatchSystemAdminCredential) SynchronizeOperation(ctx context.Context
 			}
 			return nil
 		}
+	}
+	if err := iter.GetError(); err != nil {
+		return utils.TrackError(fmt.Errorf("iterating SystemAdminCredentials: %w", err))
 	}
 
 	// Generate keypair and create a new SystemAdminCredential document.
@@ -175,7 +177,8 @@ func (c *dispatchSystemAdminCredential) SynchronizeOperation(ctx context.Context
 			Phase: api.SystemAdminCredentialPhaseRequested,
 		},
 	}
-	newCred.CosmosMetadata.ID = credName
+	newCred.CosmosMetadata.ResourceID = api.Must(azcorearm.ParseResourceID(
+		operation.ExternalID.String() + "/" + api.SystemAdminCredentialResourceTypeName + "/" + credName))
 
 	_, err = credCRUD.Create(ctx, newCred, nil)
 	if err != nil {

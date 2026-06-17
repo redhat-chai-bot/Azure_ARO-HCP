@@ -118,14 +118,14 @@ func (c *operationSystemAdminCredential) SynchronizeOperation(ctx context.Contex
 	}
 
 	var cred *api.SystemAdminCredential
-	for candidate, iterErr := range iter.Items(ctx) {
-		if iterErr != nil {
-			return utils.TrackError(iterErr)
-		}
+	for _, candidate := range iter.Items(ctx) {
 		if candidate.Spec.OperationID == oldOperation.OperationID.Name {
 			cred = candidate
 			break
 		}
+	}
+	if err := iter.GetError(); err != nil {
+		return utils.TrackError(fmt.Errorf("iterating SystemAdminCredentials: %w", err))
 	}
 	if cred == nil {
 		return fmt.Errorf("SystemAdminCredential not found for operation %s", oldOperation.OperationID.Name)

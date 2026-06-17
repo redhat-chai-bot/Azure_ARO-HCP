@@ -83,11 +83,7 @@ func (gc *RevokedGC) SyncCluster(
 	var deleted int
 	var firstErr error
 
-	for cred, iterErr := range iter.Items(ctx) {
-		if iterErr != nil {
-			return deleted, fmt.Errorf("iterating SystemAdminCredentials: %w", iterErr)
-		}
-
+	for _, cred := range iter.Items(ctx) {
 		if cred.Status.Phase != api.SystemAdminCredentialPhaseRevoked {
 			continue
 		}
@@ -96,7 +92,7 @@ func (gc *RevokedGC) SyncCluster(
 			// malformed. Skip rather than delete — an operator should
 			// investigate.
 			logger.Info("skipping Revoked credential with nil RevokedAt",
-				"credential", cred.CosmosMetadata.ID)
+				"credential", cred.CosmosMetadata.ResourceID.Name)
 			continue
 		}
 		cutoff := cred.Status.RevokedAt.Time.Add(revokedRetentionPeriod)
@@ -105,18 +101,21 @@ func (gc *RevokedGC) SyncCluster(
 		}
 
 		logger.Info("deleting expired Revoked credential",
-			"credential", cred.CosmosMetadata.ID,
+			"credential", cred.CosmosMetadata.ResourceID.Name,
 			"revoked_at", cred.Status.RevokedAt.Time)
 
-		if delErr := credCRUD.Delete(ctx, cred.CosmosMetadata.ID); delErr != nil {
+		if delErr := credCRUD.Delete(ctx, cred.CosmosMetadata.ResourceID.Name); delErr != nil {
 			logger.Error(delErr, "failed to delete credential",
-				"credential", cred.CosmosMetadata.ID)
+				"credential", cred.CosmosMetadata.ResourceID.Name)
 			if firstErr == nil {
 				firstErr = delErr
 			}
 			continue
 		}
 		deleted++
+	}
+	if err := iter.GetError(); err != nil {
+		return deleted, fmt.Errorf("iterating SystemAdminCredentials: %w", err)
 	}
 
 	return deleted, firstErr
