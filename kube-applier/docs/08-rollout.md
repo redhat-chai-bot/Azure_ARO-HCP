@@ -40,13 +40,13 @@ package yet.
 Single PR.
 
 - [ ] Add the per-MC `KubeApplierDBClient` interface with direct
-      `ApplyDesires`/`DeleteDesires`/`ReadDesires` accessors, `Listers()`,
+      `ApplyDesires`/`ReadDesires` accessors, `Listers()`,
       and `UntypedCRUD(parentResourceID)`.
 - [ ] Add the plural `KubeApplierDBClients` registry with thread-safe lazy
       caching and `ManagementClusterResourceIDs()` iteration.
 - [ ] Add `NewKubeApplierDBClient`, `NewKubeApplierDBClientFromDatabase`,
       `NewKubeApplierDBClients` constructors.
-- [ ] Add `database.Kube{Apply,Delete,Read}Desire` envelope types.
+- [ ] Add `database.Kube{Apply,Read}Desire` envelope types.
 - [ ] Update `internal/databasetesting` mocks: both `MockKubeApplierDBClient`
       (single container) and `MockKubeApplierDBClients` (registry).
 
@@ -113,30 +113,26 @@ Single PR.
 Exit criteria: in cspr, a hand-inserted ApplyDesire produces the expected
 kube object and `.status.conditions["Successful"]=True`.
 
-## Phase 8 &mdash; DeleteDesireController (Doc 05.2)
-
-Single PR. Same shape as Phase 7.
-
-## Phase 9 &mdash; ReadDesire controllers (Doc 05.3 + 5.4)
+## Phase 8 &mdash; ReadDesire controllers (Doc 05.2 + 5.3)
 
 Recommended split:
 
-- 9a: `ReadDesireKubernetesController` plus a degenerate manager that hard-codes
+- 8a: `ReadDesireKubernetesController` plus a degenerate manager that hard-codes
        a single ReadDesire (so the per-instance controller can be tested
        end-to-end without the full lifecycle logic).
-- 9b: `ReadDesireInformerManagingController` lifecycle (start/stop/recreate
+- 8b: `ReadDesireInformerManagingController` lifecycle (start/stop/recreate
        on TargetItem change).
 
 Each is its own PR.
 
-## Phase 10 &mdash; Integration tests (Doc 07.3)
+## Phase 9 &mdash; Integration tests (Doc 07.3)
 
 Single PR after the controllers are in place.
 
 - [ ] KIND-based integration tests under `test-integration/kube-applier/`.
 - [ ] Add to CI.
 
-## Phase 11 &mdash; Production deployment
+## Phase 10 &mdash; Production deployment
 
 - [ ] Tighten the kube-applier ClusterRole (off `cluster-admin`) once we
       know the GVR allowlist from real workloads.

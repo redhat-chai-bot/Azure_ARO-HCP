@@ -68,8 +68,9 @@ func TestDBApplyDesireLister_RoundTripViaMock(t *testing.T) {
 			PartitionKey: strings.ToLower(testMgmtID.String()),
 		},
 		Spec: kubeapplier.ApplyDesireSpec{
-			ManagementCluster: testMgmtID,
-			KubeContent:       &runtime.RawExtension{Raw: []byte(`{"apiVersion":"v1","kind":"ConfigMap"}`)},
+			ManagementCluster:     testMgmtID,
+			Type:                  kubeapplier.ApplyDesireTypeServerSideApply,
+			ServerSideApplyConfig: &kubeapplier.ServerSideApplyConfig{KubeContent: &runtime.RawExtension{Raw: []byte(`{"apiVersion":"v1","kind":"ConfigMap"}`)}},
 		},
 	}
 	nodePoolScoped := &kubeapplier.ApplyDesire{
@@ -79,8 +80,9 @@ func TestDBApplyDesireLister_RoundTripViaMock(t *testing.T) {
 			PartitionKey: strings.ToLower(testMgmtID.String()),
 		},
 		Spec: kubeapplier.ApplyDesireSpec{
-			ManagementCluster: testMgmtID,
-			KubeContent:       &runtime.RawExtension{Raw: []byte(`{"apiVersion":"v1","kind":"Secret"}`)},
+			ManagementCluster:     testMgmtID,
+			Type:                  kubeapplier.ApplyDesireTypeServerSideApply,
+			ServerSideApplyConfig: &kubeapplier.ServerSideApplyConfig{KubeContent: &runtime.RawExtension{Raw: []byte(`{"apiVersion":"v1","kind":"Secret"}`)}},
 		},
 	}
 

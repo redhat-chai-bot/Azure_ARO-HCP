@@ -22,7 +22,6 @@ kube-applier reconciles them against the local kube-apiserver.
    +---------+   |   (cross-partition)|     |  partition = MgmtCluster    |
                  +--------------------+     |  docs:                      |
                                             |   - ApplyDesire             |
-                                            |   - DeleteDesire            |
                                             |   - ReadDesire              |
                                             +--------------+--------------+
                                                            |
@@ -32,7 +31,6 @@ kube-applier reconciles them against the local kube-apiserver.
    +-------------+   +-------------------------------------+--+
    | Mgmt        |   |  kube-applier binary (per mgmt cluster) |
    | Kube API    |<--|  - ApplyDesireController               |
-   |             |   |  - DeleteDesireController              |
    |             |   |  - ReadDesireInformerManagingController|
    |             |   |     spawns/destroys                    |
    |             |   |       ReadDesireKubernetesController N |

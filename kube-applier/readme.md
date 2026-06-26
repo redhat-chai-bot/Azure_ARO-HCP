@@ -4,11 +4,10 @@ connection information for a cosmos container.
 
 It reads content from cosmos that use the APIs from `internal/api/kubeapplier` to decide what actions to take.
 At a high level:
-1. `ApplyDesire` indicates a kube manifest in .spec.kubeContent to issues a server-side-apply for.
+1. `ApplyDesire` indicates a kube manifest in .spec.kubeContent to issue a server-side-apply for,
+   or (with Type=Delete) a kube item in .spec.targetItem to issue a delete for.
    Success/failure to be written to the `.status.conditions["Successful"]` condition..
-2. `DeleteDesire` indicates a kube item in .spec.targetItem to issues a delete for.
-   Success/failure to be written to the `.status.conditions["Successful"]` condition..
-3. `ReadDesire` indicates a kube item in .spec.targetItem to issue a list/watch+informer for.
+2. `ReadDesire` indicates a kube item in .spec.targetItem to issue a list/watch+informer for.
    The actual list/watch result to be written to `.status.kubeContent`.
    Success/failure to be written to the `.status.conditions["Successful"]` condition..
 
@@ -41,8 +40,8 @@ No need to do so now since the type is a string.
 Each `*Desire` API a list of conditions.
 One of those conditions is the "Successful" condition.
 Successful is true if the operation succeeded.
-1. For ApplyDesire, this means a successful server-side-apply.
-2. For DeleteDesire, this means the item is no longer present in the cluster.
+1. For ApplyDesire with Type=ServerSideApply, this means a successful server-side-apply.
+2. For ApplyDesire with Type=Delete, this means the item is no longer present in the cluster.
    This is NOT the same as the delete call succeeded, remember that kubernetes has finalizers.
 3. For ReadDesire, this means the list/watch succeeded and the informer synced.
 
@@ -80,7 +79,6 @@ The golang types live in `internal/database`.
 `KubeApplierDBClient` is the per-container handle. It carries an open Cosmos container
 client plus the management cluster's partition-key value, and exposes:
 - `ApplyDesires(parent) ResourceCRUD[ApplyDesire]`
-- `DeleteDesires(parent) ResourceCRUD[DeleteDesire]`
 - `ReadDesires(parent) ResourceCRUD[ReadDesire]`
 - `Listers()` — per-container cross-type listers for feeding informers.
 - `UntypedCRUD(parentResourceID)` — TypedDocument prefix walk for cross-cutting cleanup.
@@ -137,26 +135,6 @@ to be uninterpretable — consumers cannot distinguish a target-driven
 relaunch from a process restart — so it is not surfaced.
 
 When a `ReadDesire` is deleted, the `ReadDesireKubernetesController` instance will be stopped and discarded.
-
-### DeleteDesireController
-This controller will use the `DeleteDesire` informer to feed a sync function for `DeleteDesire` instances.
-When the sync loop runs, it will
-1. issue a get for the `.spec.targetItem`
-   1. If it doesn't exist, write success and return
-   2. If it does exist and has a deletion timestamp, indicate
-      1. `.status.conditions["Successful"].status` is false
-      2. `.status.conditions["Successful"].reason` is "WaitingForDeletion"
-      3. `.status.conditions["Successful"].message` contains a message that includes the deletion timestamp and UID
-      4. and return
-   3. if it does exist and has no deletion timestamp,
-      1. issue a delete for the `.spec.targetItem`.
-         1. If unsuccessful, use the standard rule for `.status.conditions["Successful"]` and return
-         2. If successful, issue a get for the deletion timestamp, indicate
-            1. `.status.conditions["Successful"].status` is false
-            2. `.status.conditions["Successful"].reason` is "WaitingForDeletion"
-            3. `.status.conditions["Successful"].message` contains a message that includes the deletion timestamp and UID
-            4. and return
-This controller must resync every 60 seconds.
 
 ### ApplyDesireController
 This controller will use the `ApplyDesire` informer to feed a sync function for `ApplyDesire` instances.

@@ -4,8 +4,7 @@
 
 The package already exists with three minimal types:
 
-- `internal/api/kubeapplier/types_apply_desire.go` &mdash; `ApplyDesire`
-- `internal/api/kubeapplier/types_delete_desire.go` &mdash; `DeleteDesire`
+- `internal/api/kubeapplier/types_apply_desire.go` &mdash; `ApplyDesire` (with Type discriminator: ServerSideApply or Delete)
 - `internal/api/kubeapplier/types_read_desire.go` &mdash; `ReadDesire` + `ResourceReference`
 
 Each embeds `api.CosmosMetadata` and exposes a `Spec` and `Status`. The
@@ -23,7 +22,7 @@ Reference patterns to follow:
 
 ### 2.1 Generate deepcopy
 
-Add the following marker above each of `ApplyDesire`, `DeleteDesire`, and
+Add the following marker above each of `ApplyDesire` and
 `ReadDesire`:
 
 ```go
@@ -63,7 +62,6 @@ import azcorearm "github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
 
 var (
     ApplyDesireResourceType  = azcorearm.NewResourceType(api.ProviderNamespace, "applydesires")
-    DeleteDesireResourceType = azcorearm.NewResourceType(api.ProviderNamespace, "deletedesires")
     ReadDesireResourceType   = azcorearm.NewResourceType(api.ProviderNamespace, "readdesires")
 )
 ```
@@ -128,7 +126,7 @@ Mirror the existing `api.ToClusterResourceIDString` helpers
 // internal/api/kubeapplier/resource_ids.go
 func ToApplyDesireResourceIDString(sub, rg, cluster, name string) string
 func ToApplyDesireUnderNodePoolResourceIDString(sub, rg, cluster, np, name string) string
-// ... and DeleteDesire / ReadDesire variants
+// ... and ReadDesire variants
 func ParseDesireResourceID(id string) (DesireKey, error)
 ```
 

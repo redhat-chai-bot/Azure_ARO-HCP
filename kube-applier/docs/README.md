@@ -11,15 +11,14 @@ component described in [../readme.md](../readme.md).
 | [02-api-types.md](02-api-types.md) | Work needed in `internal/api/kubeapplier` (deepcopy, ResourceType registration, helpers) |
 | [03-database.md](03-database.md) | Per-management-cluster Cosmos containers, `KubeApplierDBClient` per container, thread-safe `KubeApplierDBClients` registry |
 | [04-informers-listers.md](04-informers-listers.md) | New `internal/database/{informers,listers,listertesting}` packages |
-| [05-controllers.md](05-controllers.md) | Controller designs (ApplyDesire, DeleteDesire, ReadDesireInformerManaging, ReadDesireKubernetes) |
+| [05-controllers.md](05-controllers.md) | Controller designs (ApplyDesire, ReadDesireInformerManaging, ReadDesireKubernetes) |
 | [06-binary-and-runtime.md](06-binary-and-runtime.md) | The `kube-applier` binary: kubeconfig, dynamic client, leader election, health/metrics, deployment scaffolding |
 | [07-testing.md](07-testing.md) | Unit testing with `manifestclient`; integration testing with KIND |
 | [08-rollout.md](08-rollout.md) | Phased PR plan with checkpoints |
 
 ## What already exists on this branch
 
-- `internal/api/kubeapplier/types_apply_desire.go`
-- `internal/api/kubeapplier/types_delete_desire.go`
+- `internal/api/kubeapplier/types_apply_desire.go` (includes Type=Delete support)
 - `internal/api/kubeapplier/types_read_desire.go`
 - `kube-applier/readme.md` (design intent)
 
@@ -32,7 +31,7 @@ between Cosmos DB and the local Kubernetes apiserver. It reconciles three
 small CRDs stored in Cosmos:
 
 - `ApplyDesire` &rarr; server-side-apply of `.spec.kubeContent` to the cluster
-- `DeleteDesire` &rarr; delete `.spec.targetItem` and wait for finalizers
+- `ApplyDesire` (Type=Delete) &rarr; delete `.spec.targetItem` and wait for finalizers
 - `ReadDesire` &rarr; informer-backed read of `.spec.targetItem`, mirrored to `.status.kubeContent`
 
 A separate ARO-HCP backend service (running in service clusters) creates and

@@ -1,11 +1,11 @@
 # 05 &mdash; Controllers
 
-The `kube-applier` binary runs four controllers. Three are conventional
-informer-driven controllers. The fourth (`ReadDesireInformerManagingController`)
+The `kube-applier` binary runs three controllers. Two are conventional
+informer-driven controllers. The third (`ReadDesireInformerManagingController`)
 is a controller-of-controllers that owns lifecycles of per-resource sub
 controllers.
 
-All four live under `kube-applier/pkg/controllers/`.
+All three live under `kube-applier/pkg/controllers/`.
 
 ## Shared infrastructure
 
@@ -116,37 +116,7 @@ Notes:
     `PreCheckFailed`.
   - Anything returned by `dyn.Apply` &rarr; `KubeAPIError`.
 
-## 5.2 DeleteDesireController
-
-Trigger sources:
-
-- `DeleteDesire` informer events.
-- 60-second resync (per readme: "must resync every 60 seconds"). This is the
-  `SharedIndexInformer.ResyncPeriod` plus a per-key requeue loop &mdash;
-  pick one. Recommended: rely on the informer's resync alone, set to 60s for
-  this informer specifically.
-
-Sync logic (from readme):
-
-```
-get target
-  not found             -> SetSuccessful(true)
-  has deletion timestamp -> SetSuccessful(false, "WaitingForDeletion",
-                            msg="deletionTimestamp=<t> uid=<u>")
-  no deletion timestamp -> issue Delete; if delete fails -> KubeAPIError
-                            re-issue get
-                              still not found -> SetSuccessful(true)
-                              has deletion timestamp -> WaitingForDeletion
-```
-
-Implementation tip: a single pass through this state machine should never
-need more than one delete call.
-
-UID + deletionTimestamp must be carried in the message verbatim (the readme
-specifies this explicitly so that consumers can correlate without separately
-querying the cluster).
-
-## 5.3 ReadDesireInformerManagingController
+## 5.2 ReadDesireInformerManagingController
 
 A controller-of-controllers. There is no existing equivalent in the repo, so
 this is the most novel piece.
@@ -197,7 +167,7 @@ The manager itself is a `genericWatchingController[string]` keyed by the
 ReadDesire's resource ID. On binary shutdown it iterates `runningByKey` and
 cancels each child context.
 
-## 5.4 ReadDesireKubernetesController (per ReadDesire)
+## 5.3 ReadDesireKubernetesController (per ReadDesire)
 
 One instance per `ReadDesire`. Holds:
 
@@ -260,12 +230,10 @@ kube-applier main:
   informers    := informers.NewKubeApplierInformers(ctx, scopedListers)
 
   applyCtl     := NewApplyDesireController(informers, dyn, rm, cosmos, mgmtCluster)
-  deleteCtl    := NewDeleteDesireController(informers, dyn, rm, cosmos, mgmtCluster)
   readMgr      := NewReadDesireInformerManagingController(informers, dyn, rm, cosmos, mgmtCluster)
 
   go informers.RunWithContext(ctx)
   go applyCtl.Run(ctx, 4)
-  go deleteCtl.Run(ctx, 4)
   go readMgr.Run(ctx, 4)
 ```
 

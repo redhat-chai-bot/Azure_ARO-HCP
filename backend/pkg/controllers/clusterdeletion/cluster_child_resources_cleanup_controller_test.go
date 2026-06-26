@@ -128,16 +128,17 @@ func TestClusterChildResourcesCleanupController_SyncOnce(t *testing.T) {
 			},
 		}
 	}
-	newTestNodePoolScopedDeleteDesire := func(nodePoolName, name string) *kubeapplier.DeleteDesire {
+	newTestNodePoolScopedDeleteApplyDesire := func(nodePoolName, name string) *kubeapplier.ApplyDesire {
 		resourceID := api.Must(azcorearm.ParseResourceID(
-			kubeapplier.ToNodePoolScopedDeleteDesireResourceIDString(
+			kubeapplier.ToNodePoolScopedApplyDesireResourceIDString(
 				testSubscriptionID, testResourceGroupName, testClusterName, nodePoolName, name)))
-		return &kubeapplier.DeleteDesire{
+		return &kubeapplier.ApplyDesire{
 			CosmosMetadata: api.CosmosMetadata{
 				ResourceID:   resourceID,
 				PartitionKey: strings.ToLower(managementClusterResourceID.String()),
 			},
-			Spec: kubeapplier.DeleteDesireSpec{
+			Spec: kubeapplier.ApplyDesireSpec{
+				Type:              kubeapplier.ApplyDesireTypeDelete,
 				ManagementCluster: managementClusterResourceID,
 			},
 		}
@@ -345,7 +346,7 @@ func TestClusterChildResourcesCleanupController_SyncOnce(t *testing.T) {
 				newTestClusterScopedReadDesire("readonly-hostedcluster"),
 				newTestClusterScopedApplyDesire("apply-example"),
 				newTestNodePoolScopedReadDesire("workers", "readonly-nodepool"),
-				newTestNodePoolScopedDeleteDesire("workers", "delete-example"),
+				newTestNodePoolScopedDeleteApplyDesire("workers", "delete-example"),
 			},
 			verifyDB: func(t *testing.T, ctx context.Context, db *databasetesting.MockResourcesDBClient, kubeApplierDBClients *databasetesting.MockKubeApplierDBClients) {
 				spcCRUD := db.ServiceProviderClusters(testSubscriptionID, testResourceGroupName, testClusterName)
@@ -357,7 +358,7 @@ func TestClusterChildResourcesCleanupController_SyncOnce(t *testing.T) {
 					kubeapplier.ToNodePoolScopedReadDesireResourceIDString(
 						testSubscriptionID, testResourceGroupName, testClusterName, "workers", "readonly-nodepool"))
 				assertClusterScopedKubeApplierResourceExists(t, ctx, kubeApplierDBClients,
-					kubeapplier.ToNodePoolScopedDeleteDesireResourceIDString(
+					kubeapplier.ToNodePoolScopedApplyDesireResourceIDString(
 						testSubscriptionID, testResourceGroupName, testClusterName, "workers", "delete-example"))
 			},
 		},

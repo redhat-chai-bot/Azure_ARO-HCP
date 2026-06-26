@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -119,13 +121,33 @@ func newApplyDesire(t *testing.T, name string, target kubeapplier.ResourceRefere
 		},
 		Spec: kubeapplier.ApplyDesireSpec{
 			ManagementCluster: testMgmtClusterID,
+			Type:              kubeapplier.ApplyDesireTypeServerSideApply,
 			TargetItem:        target,
 		},
 	}
 	if kubeContent != nil {
-		d.Spec.KubeContent = &runtime.RawExtension{Raw: kubeContent}
+		d.Spec.ServerSideApplyConfig = &kubeapplier.ServerSideApplyConfig{
+			KubeContent: &runtime.RawExtension{Raw: kubeContent},
+		}
 	}
 	return d
+}
+
+// newDeleteApplyDesire builds an ApplyDesire with Type=Delete.
+func newDeleteApplyDesire(t *testing.T, name string, target kubeapplier.ResourceReference) *kubeapplier.ApplyDesire {
+	t.Helper()
+	return &kubeapplier.ApplyDesire{
+		CosmosMetadata: api.CosmosMetadata{
+			ResourceID: mustParseID(t, kubeapplier.ToClusterScopedApplyDesireResourceIDString(
+				"00000000-0000-0000-0000-000000000001", "rg", "cluster", name,
+			)),
+		},
+		Spec: kubeapplier.ApplyDesireSpec{
+			ManagementCluster: testMgmtClusterID,
+			Type:              kubeapplier.ApplyDesireTypeDelete,
+			TargetItem:        target,
+		},
+	}
 }
 
 // withEtag is a tiny helper for cadence tests that need to construct
@@ -136,14 +158,42 @@ func withEtag(d *kubeapplier.ApplyDesire, etag string) *kubeapplier.ApplyDesire 
 	return d
 }
 
+func newConfigMap(name, ns string, withDeletionTS bool) *unstructured.Unstructured {
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(schema.GroupVersionKind{Version: "v1", Kind: "ConfigMap"})
+	obj.SetName(name)
+	obj.SetNamespace(ns)
+	obj.SetUID(types.UID(name + "-uid"))
+	if withDeletionTS {
+		dt := metav1.NewTime(time.Now().Add(-time.Second))
+		obj.SetDeletionTimestamp(&dt)
+	}
+	return obj
+}
+
+func findCond(conds []metav1.Condition, t string) *metav1.Condition {
+	for i := range conds {
+		if conds[i].Type == t {
+			return &conds[i]
+		}
+	}
+	return nil
+}
+
+func containsSubstr(s, substr string) bool {
+	for i := 0; i+len(substr) <= len(s); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
+// --- ServerSideApply tests ---
+
 // TestApplyDesired_IssuesSSAPatch verifies the controller issues the expected
 // SSA call (Apply patch type, Force=true, FieldManager=kube-applier, correct
 // namespace+name) for a well-formed ApplyDesire.
-//
-// We assert on the action tracker rather than the resulting object: the fake
-// dynamic client's Apply path strategic-merges via the Unstructured scheme,
-// which doesn't have the typed metadata SMP needs, so the post-apply object
-// is unreliable. End-to-end SSA semantics are covered by integration tests.
 func TestApplyDesired_IssuesSSAPatch(t *testing.T) {
 	ctx := context.Background()
 	gvr := schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}
@@ -223,7 +273,7 @@ func TestApplyDesired_PreCheckErrors(t *testing.T) {
 			name:        "empty kubeContent",
 			target:      configMapTarget("x"),
 			kubeContent: nil,
-			wantSubstr:  "spec.kubeContent is empty",
+			wantSubstr:  "kubeContent is empty",
 		},
 		{
 			name:        "malformed kubeContent JSON",
@@ -248,10 +298,139 @@ func TestApplyDesired_PreCheckErrors(t *testing.T) {
 	}
 }
 
-// TestHandleAdd_QueuesImmediately covers bot-directive case 1: a brand-new
-// ApplyDesire bypasses the cooldown gate and goes onto the workqueue right
-// away, even though Add events with the same key arriving back-to-back
-// could in principle be spammed.
+// --- Delete tests ---
+
+func TestEvaluateDelete_TargetGoneIsSuccessful(t *testing.T) {
+	dyn := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
+		{Version: "v1", Resource: "configmaps"}: "ConfigMapList",
+	})
+	c := &ApplyDesireController{dyn: dyn}
+
+	desire := newDeleteApplyDesire(t, "d", kubeapplier.ResourceReference{
+		Version: "v1", Resource: "configmaps", Namespace: "default", Name: "missing",
+	})
+	mutate, err := c.evaluateDelete(context.Background(), desire)
+	if err != nil {
+		t.Fatalf("evaluateDelete: %v", err)
+	}
+	mutate(desire)
+	if got := findCond(desire.Status.Conditions, kubeapplier.ConditionTypeSuccessful); got == nil ||
+		got.Status != metav1.ConditionTrue {
+		t.Errorf("Successful=%v, want True (target absent)", got)
+	}
+}
+
+func TestEvaluateDelete_TargetWithDeletionTimestampWaits(t *testing.T) {
+	dyn := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
+		map[schema.GroupVersionResource]string{
+			{Version: "v1", Resource: "configmaps"}: "ConfigMapList",
+		},
+		newConfigMap("doomed", "default", true))
+	c := &ApplyDesireController{dyn: dyn}
+
+	desire := newDeleteApplyDesire(t, "d", kubeapplier.ResourceReference{
+		Version: "v1", Resource: "configmaps", Namespace: "default", Name: "doomed",
+	})
+	mutate, err := c.evaluateDelete(context.Background(), desire)
+	if err != nil {
+		t.Fatalf("evaluateDelete: %v", err)
+	}
+	mutate(desire)
+	got := findCond(desire.Status.Conditions, kubeapplier.ConditionTypeSuccessful)
+	if got == nil || got.Status != metav1.ConditionFalse {
+		t.Fatalf("Successful=%v, want False (waiting)", got)
+	}
+	if got.Reason != kubeapplier.ConditionReasonWaitingForDeletion {
+		t.Errorf("Reason = %q, want %q", got.Reason, kubeapplier.ConditionReasonWaitingForDeletion)
+	}
+	if !containsSubstr(got.Message, "doomed-uid") {
+		t.Errorf("Message %q does not contain UID", got.Message)
+	}
+}
+
+func TestEvaluateDelete_PresentNoTSIssuesDelete_ThenWaitsForFinalizers(t *testing.T) {
+	cm := newConfigMap("d1", "default", false)
+	dyn := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
+		map[schema.GroupVersionResource]string{
+			{Version: "v1", Resource: "configmaps"}: "ConfigMapList",
+		},
+		cm)
+
+	dyn.PrependReactor("delete", "configmaps", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		da := action.(clienttesting.DeleteAction)
+		dt := metav1.NewTime(time.Now())
+		updated := newConfigMap(da.GetName(), da.GetNamespace(), false)
+		updated.SetDeletionTimestamp(&dt)
+		return true, updated, nil
+	})
+	dyn.PrependReactor("get", "configmaps", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		return false, nil, nil
+	})
+	calls := 0
+	dyn.PrependReactor("get", "configmaps", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		calls++
+		if calls < 2 {
+			return false, nil, nil
+		}
+		dt := metav1.NewTime(time.Now())
+		obj := newConfigMap("d1", "default", false)
+		obj.SetDeletionTimestamp(&dt)
+		return true, obj, nil
+	})
+
+	c := &ApplyDesireController{dyn: dyn}
+	desire := newDeleteApplyDesire(t, "d", kubeapplier.ResourceReference{
+		Version: "v1", Resource: "configmaps", Namespace: "default", Name: "d1",
+	})
+	mutate, err := c.evaluateDelete(context.Background(), desire)
+	if err != nil {
+		t.Fatalf("evaluateDelete: %v", err)
+	}
+	mutate(desire)
+	got := findCond(desire.Status.Conditions, kubeapplier.ConditionTypeSuccessful)
+	if got == nil || got.Status != metav1.ConditionFalse || got.Reason != kubeapplier.ConditionReasonWaitingForDeletion {
+		t.Errorf("Successful=%v, want False/WaitingForDeletion", got)
+	}
+}
+
+func TestEvaluateDelete_DeleteAPIErrorClassifiesAsKubeAPIError(t *testing.T) {
+	cm := newConfigMap("d2", "default", false)
+	dyn := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
+		map[schema.GroupVersionResource]string{
+			{Version: "v1", Resource: "configmaps"}: "ConfigMapList",
+		},
+		cm)
+	dyn.PrependReactor("delete", "configmaps", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewServiceUnavailable("apiserver unavailable")
+	})
+	c := &ApplyDesireController{dyn: dyn}
+	desire := newDeleteApplyDesire(t, "d", kubeapplier.ResourceReference{
+		Version: "v1", Resource: "configmaps", Namespace: "default", Name: "d2",
+	})
+	mutate, _ := c.evaluateDelete(context.Background(), desire)
+	mutate(desire)
+	got := findCond(desire.Status.Conditions, kubeapplier.ConditionTypeSuccessful)
+	if got == nil || got.Status != metav1.ConditionFalse || got.Reason != kubeapplier.ConditionReasonKubeAPIError {
+		t.Errorf("Successful=%v, want False/KubeAPIError", got)
+	}
+}
+
+func TestEvaluateDelete_BadTargetIsPreCheckFailed(t *testing.T) {
+	dyn := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), nil)
+	c := &ApplyDesireController{dyn: dyn}
+	desire := newDeleteApplyDesire(t, "d", kubeapplier.ResourceReference{
+		// Missing Resource and Name.
+	})
+	mutate, _ := c.evaluateDelete(context.Background(), desire)
+	mutate(desire)
+	got := findCond(desire.Status.Conditions, kubeapplier.ConditionTypeSuccessful)
+	if got == nil || got.Reason != kubeapplier.ConditionReasonPreCheckFailed {
+		t.Errorf("Successful=%v, want PreCheckFailed", got)
+	}
+}
+
+// --- Cadence tests ---
+
 func TestHandleAdd_QueuesImmediately(t *testing.T) {
 	c := newCadenceController(t, Config{})
 	desire := newApplyDesire(t, "ok", configMapTarget("hello"), nil)
@@ -267,15 +446,6 @@ func TestHandleAdd_QueuesImmediately(t *testing.T) {
 	}
 }
 
-// TestHandleUpdate_EtagChangeQueuesImmediately covers bot-directive case 2:
-// when Cosmos etag differs between the previous and current snapshots, the
-// controller treats the update as a real content change and queues
-// immediately — bypassing the cooldown gate so users see their content
-// reflected fast.
-//
-// Etag (rather than spec deep-equals) is the right signal because Cosmos
-// bumps it on every mutation, and the backend's GenericWatchingController
-// uses the same convention.
 func TestHandleUpdate_EtagChangeQueuesImmediately(t *testing.T) {
 	c := newCadenceController(t, Config{})
 
@@ -292,9 +462,6 @@ func TestHandleUpdate_EtagChangeQueuesImmediately(t *testing.T) {
 	}
 }
 
-// TestProcessNext_ErrorRequeues covers bot-directive case 3: when SyncOnce
-// returns an error, processNext rate-limits a requeue. The rate limiter
-// (not the cooldown gate) drives retry timing, so retries happen quickly.
 func TestProcessNext_ErrorRequeues(t *testing.T) {
 	c := newCadenceController(t, Config{})
 	c.fetcher = &errFetcher{err: errors.New("cosmos boom")}
@@ -312,15 +479,6 @@ func TestProcessNext_ErrorRequeues(t *testing.T) {
 	}
 }
 
-// TestHandleUpdate_UnchangedEtagGatedByCooldown covers bot-directive case 4:
-// when etag is unchanged (the informer's resync, or our own status write
-// fed back), handleUpdate consults the cooldown gate. The first call passes
-// through (no prior record); subsequent calls within the configured window
-// are dropped; once the clock advances past the window, the gate reopens.
-//
-// In production this is what makes "unchanged content reconciles slowly"
-// — the informer fires resyncs frequently, but only one in CooldownPeriod
-// makes it onto the workqueue.
 func TestHandleUpdate_UnchangedEtagGatedByCooldown(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	fc := clocktesting.NewFakePassiveClock(t0)
@@ -334,8 +492,6 @@ func TestHandleUpdate_UnchangedEtagGatedByCooldown(t *testing.T) {
 	newDesire := withEtag(newApplyDesire(t, "ok", configMapTarget("hello"), nil), "v1")
 	key := mustKey(t, newDesire)
 
-	// drain consumes everything currently on the queue and returns the keys
-	// in order, so each phase of the test starts from an empty queue.
 	drain := func() []keys.ApplyDesireKey {
 		var got []keys.ApplyDesireKey
 		for c.queue.Len() > 0 {

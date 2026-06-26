@@ -53,8 +53,11 @@ func fixtureApplyDesire(t *testing.T) *ApplyDesire {
 		CosmosMetadata: api.CosmosMetadata{ResourceID: id},
 		Spec: ApplyDesireSpec{
 			ManagementCluster: fixtureMgmtClusterID(t),
-			KubeContent: &runtime.RawExtension{
-				Raw: []byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"x","namespace":"default"},"data":{"key":"value"}}`),
+			Type:              ApplyDesireTypeServerSideApply,
+			ServerSideApplyConfig: &ServerSideApplyConfig{
+				KubeContent: &runtime.RawExtension{
+					Raw: []byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"x","namespace":"default"},"data":{"key":"value"}}`),
+				},
 			},
 		},
 		Status: ApplyDesireStatus{
@@ -65,23 +68,25 @@ func fixtureApplyDesire(t *testing.T) *ApplyDesire {
 	}
 }
 
-func fixtureDeleteDesire(t *testing.T) *DeleteDesire {
+// fixtureDeleteApplyDesire builds a populated ApplyDesire with Type=Delete.
+func fixtureDeleteApplyDesire(t *testing.T) *ApplyDesire {
 	t.Helper()
-	id, err := azcorearm.ParseResourceID(ToClusterScopedDeleteDesireResourceIDString(
-		"00000000-0000-0000-0000-000000000001", "myRG", "myCluster", "myDesire",
+	id, err := azcorearm.ParseResourceID(ToClusterScopedApplyDesireResourceIDString(
+		"00000000-0000-0000-0000-000000000001", "myRG", "myCluster", "myDeleteDesire",
 	))
 	if err != nil {
 		t.Fatalf("parse resource id: %v", err)
 	}
-	return &DeleteDesire{
+	return &ApplyDesire{
 		CosmosMetadata: api.CosmosMetadata{ResourceID: id},
-		Spec: DeleteDesireSpec{
+		Spec: ApplyDesireSpec{
 			ManagementCluster: fixtureMgmtClusterID(t),
+			Type:              ApplyDesireTypeDelete,
 			TargetItem: ResourceReference{
-				Group: "apps", Resource: "deployments", Namespace: "ns", Name: "x",
+				Group: "apps", Version: "v1", Resource: "deployments", Namespace: "ns", Name: "x",
 			},
 		},
-		Status: DeleteDesireStatus{
+		Status: ApplyDesireStatus{
 			Conditions: []metav1.Condition{
 				{Type: ConditionTypeSuccessful, Status: metav1.ConditionFalse, Reason: ConditionReasonWaitingForDeletion, Message: "uid=abc"},
 			},
@@ -123,7 +128,7 @@ func TestRuntimeObjectAndJSONRoundTrip(t *testing.T) {
 	}
 	cases := []tc{
 		{name: "ApplyDesire", newObj: func(t *testing.T) runtime.Object { return fixtureApplyDesire(t) }},
-		{name: "DeleteDesire", newObj: func(t *testing.T) runtime.Object { return fixtureDeleteDesire(t) }},
+		{name: "ApplyDesire_Delete", newObj: func(t *testing.T) runtime.Object { return fixtureDeleteApplyDesire(t) }},
 		{name: "ReadDesire", newObj: func(t *testing.T) runtime.Object { return fixtureReadDesire(t) }},
 	}
 	for _, c := range cases {
@@ -153,10 +158,10 @@ func TestRuntimeObjectAndJSONRoundTrip(t *testing.T) {
 			switch v := copy.(type) {
 			case *ApplyDesire:
 				v.Status.Conditions[0].Message = "mutated"
-				v.Spec.KubeContent.Raw = append([]byte(nil), v.Spec.KubeContent.Raw...)
-				v.Spec.KubeContent.Raw[0] = 'X'
-			case *DeleteDesire:
-				v.Status.Conditions[0].Message = "mutated"
+				if v.Spec.ServerSideApplyConfig != nil && v.Spec.ServerSideApplyConfig.KubeContent != nil {
+					v.Spec.ServerSideApplyConfig.KubeContent.Raw = append([]byte(nil), v.Spec.ServerSideApplyConfig.KubeContent.Raw...)
+					v.Spec.ServerSideApplyConfig.KubeContent.Raw[0] = 'X'
+				}
 			case *ReadDesire:
 				v.Status.Conditions[0].Message = "mutated"
 				v.Status.KubeContent.Raw = append([]byte(nil), v.Status.KubeContent.Raw...)
@@ -182,8 +187,6 @@ func TestRuntimeObjectAndJSONRoundTrip(t *testing.T) {
 			switch original.(type) {
 			case *ApplyDesire:
 				roundTripped = &ApplyDesire{}
-			case *DeleteDesire:
-				roundTripped = &DeleteDesire{}
 			case *ReadDesire:
 				roundTripped = &ReadDesire{}
 			}
@@ -203,9 +206,8 @@ func TestRuntimeObjectAndJSONRoundTrip(t *testing.T) {
 
 func TestObjectMetaAccessor(t *testing.T) {
 	apply := fixtureApplyDesire(t)
-	delete := fixtureDeleteDesire(t)
 	read := fixtureReadDesire(t)
-	for _, o := range []interface{ GetObjectMeta() metav1.Object }{apply, delete, read} {
+	for _, o := range []interface{ GetObjectMeta() metav1.Object }{apply, read} {
 		if name := o.GetObjectMeta().GetName(); name == "" {
 			t.Errorf("GetObjectMeta returned empty Name; should reflect lowercased ResourceID")
 		}

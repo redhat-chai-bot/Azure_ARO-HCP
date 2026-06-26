@@ -45,16 +45,6 @@ dyn, _ := dynamic.NewForConfig(cfg)
 | existing object owned by another field manager (force=true) | `Successful=True`; verify the diff was applied |
 | no-op resync (status already correct) | no Cosmos write (verify via mock) |
 
-### DeleteDesireController
-
-| Case | Expected condition |
-| --- | --- |
-| target absent | `Successful=True` |
-| target present, no deletionTimestamp, delete returns 404 (race) | `Successful=True` |
-| target present, no deletionTimestamp, delete succeeds | `Successful=False`, reason `WaitingForDeletion`, message includes UID + DT |
-| target present, deletionTimestamp already set | `Successful=False`, reason `WaitingForDeletion` |
-| delete returns 500 | `Successful=False`, reason `KubeAPIError` |
-
 ### ReadDesireInformerManagingController
 
 | Case | Expected behaviour |
@@ -106,7 +96,7 @@ Smoke scenarios at minimum:
 - Apply a Namespace + ConfigMap, verify they exist; mutate the ApplyDesire,
   verify the ConfigMap is updated; delete the ApplyDesire (mock-side),
   verify the ConfigMap is left in place (we are not cascading deletes).
-- Create a DeleteDesire targeting the ConfigMap, verify it is deleted and
+- Create an ApplyDesire with Type=Delete targeting the ConfigMap, verify it is deleted and
   the desire reports `Successful=True`.
 - Create a ReadDesire on the ConfigMap; verify `.status.kubeContent`
   becomes the live ConfigMap; mutate the live ConfigMap directly via the

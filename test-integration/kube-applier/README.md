@@ -43,7 +43,6 @@ namespace will not collide with sibling tests.
 | stepType | Purpose | Files |
 | --- | --- | --- |
 | `loadApplyDesire` | Insert ApplyDesire docs into the mock Cosmos. | `*.json` (one per desire) |
-| `loadDeleteDesire` | Insert DeleteDesire docs. | `*.json` |
 | `loadReadDesire` | Insert ReadDesire docs. | `*.json` |
 | `kubernetesLoad` | Create unstructured Kubernetes objects via the dynamic client. | `*.json` |
 | `kubernetesApply` | Get-then-Update existing Kubernetes objects. Preserves resourceVersion / uid. | `*.json` |

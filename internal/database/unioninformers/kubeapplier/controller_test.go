@@ -197,8 +197,9 @@ func ctlNewApplyDesire(t *testing.T, idStr string, mgmt *azcorearm.ResourceID) *
 	return &kubeapplier.ApplyDesire{
 		CosmosMetadata: api.CosmosMetadata{ResourceID: id, PartitionKey: strings.ToLower(mgmt.String())},
 		Spec: kubeapplier.ApplyDesireSpec{
-			ManagementCluster: mgmt,
-			KubeContent:       &runtime.RawExtension{Raw: []byte(`{"apiVersion":"v1","kind":"ConfigMap"}`)},
+			ManagementCluster:     mgmt,
+			Type:                  kubeapplier.ApplyDesireTypeServerSideApply,
+			ServerSideApplyConfig: &kubeapplier.ServerSideApplyConfig{KubeContent: &runtime.RawExtension{Raw: []byte(`{"apiVersion":"v1","kind":"ConfigMap"}`)}},
 		},
 	}
 }

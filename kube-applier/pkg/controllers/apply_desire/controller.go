@@ -15,11 +15,16 @@
 // Package apply_desire implements the ApplyDesireController.
 //
 // On every sync the controller reads the named ApplyDesire from a live
-// Cosmos client, decodes spec.kubeContent into an unstructured object, and
-// issues a server-side-apply with Force=true and FieldManager from this
-// package's FieldManager const via the dynamic client. The outcome is
-// recorded on .status.conditions["Successful"] / ["Degraded"] and persisted
-// via the StatusWriter.
+// Cosmos client, dispatches on spec.Type, and either:
+//   - ServerSideApply: decodes spec.serverSideApplyConfig.kubeContent into an
+//     unstructured object and issues a server-side-apply with Force=true and
+//     FieldManager from this package's FieldManager const via the dynamic client.
+//   - Delete: resolves spec.targetItem to a GVR, gets the object, and either
+//     reports Successful=True (object gone), WaitingForDeletion (finalizers), or
+//     issues a delete and re-checks.
+//
+// The outcome is recorded on .status.conditions["Successful"] / ["Degraded"]
+// and persisted via the StatusWriter.
 package apply_desire
 
 import (
@@ -72,6 +77,13 @@ const ApplyDesireControllerName = "ApplyDesireController"
 // Cosmos etag — bypass this gate so users see their content reflected fast.
 const DefaultCooldownPeriod = 10 * time.Minute
 
+// DefaultDeleteCooldownPeriod is the minimum interval between two reconciles
+// of an unchanged ApplyDesire with Type=Delete whose Cosmos etag has not
+// changed. 1 minute is shorter than the SSA default because a desire in the
+// WaitingForDeletion state needs to keep checking the kube apiserver to see
+// whether finalizers have completed.
+const DefaultDeleteCooldownPeriod = 1 * time.Minute
+
 // Config tunes the ApplyDesireController's cooldown behavior. Zero-valued
 // fields take the Default* constants below; tests pass shorter durations
 // and a fake clock.
@@ -94,7 +106,10 @@ func (c Config) withDefaults() Config {
 	return c
 }
 
-// ApplyDesireController reconciles ApplyDesires by SSA-applying spec.kubeContent.
+// ApplyDesireController reconciles ApplyDesires by dispatching on spec.Type:
+//
+//   - ServerSideApply: SSA-applying spec.serverSideApplyConfig.kubeContent.
+//   - Delete: deleting spec.targetItem and waiting for it to disappear.
 //
 // Reconcile cadence (mirrors backend's GenericWatchingController):
 //
@@ -119,8 +134,9 @@ type ApplyDesireController struct {
 }
 
 // NewApplyDesireController wires up the informer event handler and returns a
-// ready-to-Run controller. SSA writes go through dyn; we don't consult a
-// RESTMapper — see applyDesired for the GVR-from-GVK convention.
+// ready-to-Run controller. SSA writes and deletes go through dyn; we don't
+// consult a RESTMapper — see applyDesired and evaluateDelete for the
+// GVR-from-spec convention.
 //
 // crudByParent provides a parent-scoped ResourceCRUD per ApplyDesire so
 // status replaces can be issued under the desire's own cluster/nodepool
@@ -277,6 +293,7 @@ func (c *ApplyDesireController) processNext(ctx context.Context) bool {
 }
 
 // SyncOnce performs a single reconcile pass for the named ApplyDesire.
+// It dispatches on spec.Type to the appropriate handler.
 // It is idempotent; concurrent invocations on different keys are safe.
 func (c *ApplyDesireController) SyncOnce(ctx context.Context, key keys.ApplyDesireKey) error {
 	desire, err := c.fetcher.Fetch(ctx, key)
@@ -290,12 +307,24 @@ func (c *ApplyDesireController) SyncOnce(ctx context.Context, key keys.ApplyDesi
 		return nil
 	}
 
-	syncErr := c.applyDesired(ctx, desire)
+	switch desire.Spec.Type {
+	case kubeapplier.ApplyDesireTypeDelete:
+		mutate, _ := c.evaluateDelete(ctx, desire)
+		// The error returned by evaluateDelete is already encoded into the
+		// status mutation via SetSuccessful, so we don't propagate it back to
+		// the workqueue — the next informer event or resync will redrive the
+		// loop if needed.
+		return c.writer.UpdateStatus(ctx, key, mutate)
 
-	return c.writer.UpdateStatus(ctx, key, func(d *kubeapplier.ApplyDesire) {
-		conditions.SetSuccessful(&d.Status.Conditions, syncErr)
-		conditions.SetDegraded(&d.Status.Conditions, classifyAsDegraded(syncErr))
-	})
+	default:
+		// Default to ServerSideApply for backwards compatibility with desires
+		// that don't have an explicit Type set.
+		syncErr := c.applyDesired(ctx, desire)
+		return c.writer.UpdateStatus(ctx, key, func(d *kubeapplier.ApplyDesire) {
+			conditions.SetSuccessful(&d.Status.Conditions, syncErr)
+			conditions.SetDegraded(&d.Status.Conditions, classifyAsDegraded(syncErr))
+		})
+	}
 }
 
 // applyDesired performs the kubeContent decode and SSA call. The GVR comes
@@ -311,11 +340,11 @@ func (c *ApplyDesireController) applyDesired(ctx context.Context, d *kubeapplier
 	if len(target.Resource) == 0 || len(target.Version) == 0 || len(target.Name) == 0 {
 		return conditions.NewPreCheckError(errors.New("spec.targetItem requires version, resource, and name"))
 	}
-	if d.Spec.KubeContent == nil || len(d.Spec.KubeContent.Raw) == 0 {
-		return conditions.NewPreCheckError(errors.New("spec.kubeContent is empty"))
+	if d.Spec.ServerSideApplyConfig == nil || d.Spec.ServerSideApplyConfig.KubeContent == nil || len(d.Spec.ServerSideApplyConfig.KubeContent.Raw) == 0 {
+		return conditions.NewPreCheckError(errors.New("spec.serverSideApplyConfig.kubeContent is empty"))
 	}
 	obj := &unstructured.Unstructured{}
-	if err := obj.UnmarshalJSON(d.Spec.KubeContent.Raw); err != nil {
+	if err := obj.UnmarshalJSON(d.Spec.ServerSideApplyConfig.KubeContent.Raw); err != nil {
 		return conditions.NewPreCheckError(fmt.Errorf("decode kubeContent: %w", err))
 	}
 
@@ -338,6 +367,105 @@ func (c *ApplyDesireController) applyDesired(ctx context.Context, d *kubeapplier
 	return nil
 }
 
+// evaluateDelete runs the state machine for an ApplyDesire with Type=Delete
+// and returns the status mutation function that records the outcome.
+//
+// State machine:
+//
+//	get target
+//	  not found             -> SetSuccessful(true)
+//	  has deletion timestamp -> WaitingForDeletion
+//	  no deletion timestamp -> issue Delete; on error -> KubeAPIError
+//	                           re-issue get
+//	                             still not found       -> SetSuccessful(true)
+//	                             has deletion timestamp -> WaitingForDeletion
+//
+// We don't consult a RESTMapper: the GVR is taken straight from
+// spec.targetItem, and scope is decided by namespace presence. If the GVR
+// doesn't resolve, the dynamic client surfaces a kube error that lands in
+// SetSuccessful as KubeAPIError.
+func (c *ApplyDesireController) evaluateDelete(ctx context.Context, d *kubeapplier.ApplyDesire) (desirestatuswriter.MutateFunc[kubeapplier.ApplyDesire], error) {
+	target := d.Spec.TargetItem
+	if len(target.Resource) == 0 || len(target.Version) == 0 || len(target.Name) == 0 {
+		err := conditions.NewPreCheckError(errors.New("spec.targetItem requires version, resource, and name"))
+		return func(d *kubeapplier.ApplyDesire) {
+			conditions.SetSuccessful(&d.Status.Conditions, err)
+			conditions.SetDegraded(&d.Status.Conditions, classifyDeleteAsDegraded(err))
+		}, err
+	}
+
+	gvr := schema.GroupVersionResource{Group: target.Group, Version: target.Version, Resource: target.Resource}
+	resource := c.dyn.Resource(gvr)
+	var kubeResourceAccessor dynamic.ResourceInterface = resource
+	if len(target.Namespace) > 0 {
+		kubeResourceAccessor = resource.Namespace(target.Namespace)
+	}
+
+	got, getErr := kubeResourceAccessor.Get(ctx, target.Name, metav1.GetOptions{})
+	if apierrors.IsNotFound(getErr) {
+		return func(d *kubeapplier.ApplyDesire) {
+			conditions.SetSuccessful(&d.Status.Conditions, nil)
+			conditions.SetDegraded(&d.Status.Conditions, nil)
+		}, nil
+	}
+	if getErr != nil {
+		err := fmt.Errorf("get target: %w", getErr)
+		return func(d *kubeapplier.ApplyDesire) {
+			conditions.SetSuccessful(&d.Status.Conditions, err)
+			conditions.SetDegraded(&d.Status.Conditions, classifyDeleteAsDegraded(err))
+		}, err
+	}
+
+	if dt := got.GetDeletionTimestamp(); dt != nil {
+		uid := got.GetUID()
+		return func(d *kubeapplier.ApplyDesire) {
+			conditions.SetSuccessfulWaitingForDeletion(&d.Status.Conditions, *dt, uid)
+			conditions.SetDegraded(&d.Status.Conditions, nil)
+		}, nil
+	}
+
+	if delErr := kubeResourceAccessor.Delete(ctx, target.Name, metav1.DeleteOptions{}); delErr != nil {
+		if apierrors.IsNotFound(delErr) {
+			return func(d *kubeapplier.ApplyDesire) {
+				conditions.SetSuccessful(&d.Status.Conditions, nil)
+				conditions.SetDegraded(&d.Status.Conditions, nil)
+			}, nil
+		}
+		err := fmt.Errorf("delete target: %w", delErr)
+		return func(d *kubeapplier.ApplyDesire) {
+			conditions.SetSuccessful(&d.Status.Conditions, err)
+			conditions.SetDegraded(&d.Status.Conditions, classifyDeleteAsDegraded(err))
+		}, err
+	}
+
+	// Re-read post-delete to capture the deletion-timestamp + UID for the
+	// "waiting for finalizers" message.
+	post, postErr := kubeResourceAccessor.Get(ctx, target.Name, metav1.GetOptions{})
+	if apierrors.IsNotFound(postErr) {
+		return func(d *kubeapplier.ApplyDesire) {
+			conditions.SetSuccessful(&d.Status.Conditions, nil)
+			conditions.SetDegraded(&d.Status.Conditions, nil)
+		}, nil
+	}
+	if postErr != nil {
+		err := fmt.Errorf("post-delete get: %w", postErr)
+		return func(d *kubeapplier.ApplyDesire) {
+			conditions.SetSuccessful(&d.Status.Conditions, err)
+			conditions.SetDegraded(&d.Status.Conditions, classifyDeleteAsDegraded(err))
+		}, err
+	}
+	dt := post.GetDeletionTimestamp()
+	uid := post.GetUID()
+	if dt == nil {
+		now := metav1.NewTime(time.Now())
+		dt = &now
+	}
+	return func(d *kubeapplier.ApplyDesire) {
+		conditions.SetSuccessfulWaitingForDeletion(&d.Status.Conditions, *dt, uid)
+		conditions.SetDegraded(&d.Status.Conditions, nil)
+	}, nil
+}
+
 // classifyAsDegraded picks which sync errors should bubble to the Degraded
 // condition. PreCheck failures are status-only signals, not controller-health
 // problems, so we suppress them here.
@@ -353,6 +481,25 @@ func classifyAsDegraded(err error) error {
 	// controller wedges. Only 5xx and unclassified errors register as Degraded.
 	if isClientError(err) {
 		return nil
+	}
+	return err
+}
+
+// classifyDeleteAsDegraded mirrors classifyAsDegraded for the delete path.
+func classifyDeleteAsDegraded(err error) error {
+	if err == nil {
+		return nil
+	}
+	var preCheck *conditions.PreCheckError
+	if errors.As(err, &preCheck) {
+		return nil
+	}
+	var statusErr *apierrors.StatusError
+	if errors.As(err, &statusErr) {
+		c := statusErr.ErrStatus.Code
+		if c >= 400 && c < 500 {
+			return nil
+		}
 	}
 	return err
 }

@@ -23,12 +23,33 @@ import (
 	"github.com/Azure/ARO-HCP/internal/api"
 )
 
-// ApplyDesire holds a single Kubernetes object to be server-side-applied to
-// the management cluster's apiserver. Each ApplyDesire targets exactly one
-// kube object — there is no list form.
+// ApplyDesireType is the discriminator that selects which reconciliation
+// strategy the kube-applier uses for an ApplyDesire.
+type ApplyDesireType string
+
+const (
+	// ApplyDesireTypeServerSideApply instructs the kube-applier to
+	// server-side-apply the object in ServerSideApplyConfig.KubeContent.
+	ApplyDesireTypeServerSideApply ApplyDesireType = "ServerSideApply"
+
+	// ApplyDesireTypeDelete instructs the kube-applier to delete the object
+	// identified by spec.TargetItem. After issuing a delete the controller
+	// waits for the object to actually disappear (finalizer-driven removal is
+	// reflected in status), then reports Successful=True.
+	ApplyDesireTypeDelete ApplyDesireType = "Delete"
+)
+
+// ApplyDesire holds a single desired-state intent for the kube-applier to
+// reconcile against a management cluster's apiserver. The spec.Type
+// discriminator selects the reconciliation strategy:
+//
+//   - ServerSideApply: SSA-apply the object in ServerSideApplyConfig.KubeContent.
+//   - Delete: delete the object identified by spec.TargetItem and wait for it
+//     to disappear.
 //
 // Deleting an ApplyDesire from Cosmos has no effect on the kube object that
-// was applied. To remove the kube object, create a corresponding DeleteDesire.
+// was applied or deleted. Removing the desire only stops further
+// reconciliation; the underlying kube state is unchanged.
 //
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 type ApplyDesire struct {
@@ -56,13 +77,29 @@ type ApplyDesireSpec struct {
 	// Example: "/providers/microsoft.redhatopenshift/stamps/1/managementclusters/default"
 	ManagementCluster *azcorearm.ResourceID `json:"managementCluster"`
 
+	// Type selects the reconciliation strategy.
+	//   - "ServerSideApply" (default): server-side-apply KubeContent.
+	//   - "Delete": delete the target identified by TargetItem and wait for
+	//     it to disappear.
+	Type ApplyDesireType `json:"type"`
+
 	// TargetItem identifies the GVR (and optionally the namespace) the kube-applier
-	// will server-side-apply against. The controller uses Group + Resource verbatim
+	// will act on. For ServerSideApply the controller uses Group + Resource verbatim
 	// rather than guessing a plural form from KubeContent's kind. Name and Namespace
 	// must agree with KubeContent.metadata.{name,namespace}; the controller does not
 	// re-derive them from the manifest.
+	// For Delete, this identifies the single kube object to delete.
 	TargetItem ResourceReference `json:"targetItem"`
 
+	// ServerSideApplyConfig holds the configuration specific to a
+	// ServerSideApply desire. It must be non-nil when Type is
+	// ServerSideApply and must be nil when Type is Delete.
+	ServerSideApplyConfig *ServerSideApplyConfig `json:"serverSideApplyConfig,omitempty"`
+}
+
+// ServerSideApplyConfig holds the SSA-specific fields for an ApplyDesire
+// with Type=ServerSideApply.
+type ServerSideApplyConfig struct {
 	// KubeContent is a single Kubernetes object (not a List) to be applied
 	// with server-side-apply and Force=true. The object must carry apiVersion,
 	// kind, metadata.name, and metadata.namespace if namespaced.
@@ -80,7 +117,8 @@ type ApplyDesireSpec struct {
 
 type ApplyDesireStatus struct {
 	// Conditions reports per-desire reconciliation status. Well-known types:
-	//   - "Successful": the SSA succeeded.
+	//   - "Successful": the SSA succeeded (for ServerSideApply) or the target
+	//                   is gone (for Delete).
 	//   - "Degraded":   the controller is not making progress for an
 	//                   out-of-band reason.
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
