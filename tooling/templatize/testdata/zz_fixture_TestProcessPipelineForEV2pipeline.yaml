@@ -53,12 +53,9 @@ resourceGroups:
           certificateName:
             name: certificateName
             value: hcp-mdsd
-          commonName:
-            name: commonName
-            value: hcp-mdsd.geneva.keyvault.aro-int.azure.com
           contentType:
             name: contentType
-            value: x-pkcs12
+            value: x-pem-file
           issuer:
             name: issuer
             value: OneCertV2-PrivateCA

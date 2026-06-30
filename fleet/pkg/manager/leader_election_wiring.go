@@ -16,11 +16,16 @@ package manager
 
 import (
 	"fmt"
+	"time"
 
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
+)
 
-	"github.com/Azure/ARO-HCP/internal/leaderelection"
+const (
+	LeaderElectionLeaseDuration = 15 * time.Second
+	LeaderElectionRenewDeadline = 10 * time.Second
+	LeaderElectionRetryPeriod   = 2 * time.Second
 )
 
 // NewLeaderElectionLock builds a Leases-backed lock. The identity should be the
@@ -31,9 +36,20 @@ func NewLeaderElectionLock(
 	namespace string,
 	leaseName string,
 ) (resourcelock.Interface, error) {
-	lock, err := leaderelection.NewLeaderElectionLock(identity, kubeconfig, namespace, leaseName, leaderelection.RecommendedRenewDeadline)
+	leaderElectionKubeconfig := rest.CopyConfig(kubeconfig)
+	leaderElectionKubeconfig.QPS = 20
+	leaderElectionKubeconfig.Burst = 40
+
+	lock, err := resourcelock.NewFromKubeconfig(
+		resourcelock.LeasesResourceLock,
+		namespace,
+		leaseName,
+		resourcelock.ResourceLockConfig{Identity: identity},
+		leaderElectionKubeconfig,
+		LeaderElectionRenewDeadline,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("leader election lock %s/%s: %w", namespace, leaseName, err)
+		return nil, fmt.Errorf("failed to create leader election lock: %w", err)
 	}
 	return lock, nil
 }

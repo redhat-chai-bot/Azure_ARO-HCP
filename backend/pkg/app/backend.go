@@ -53,11 +53,11 @@ import (
 	"github.com/Azure/ARO-HCP/backend/pkg/controllers/validationcontrollers"
 	"github.com/Azure/ARO-HCP/backend/pkg/controllers/validationcontrollers/validations"
 	"github.com/Azure/ARO-HCP/backend/pkg/informers"
+	"github.com/Azure/ARO-HCP/backend/pkg/maestro"
 	internalazure "github.com/Azure/ARO-HCP/internal/azure"
 	"github.com/Azure/ARO-HCP/internal/database"
 	dbinformers "github.com/Azure/ARO-HCP/internal/database/informers"
 	unionkubeapplierinformers "github.com/Azure/ARO-HCP/internal/database/unioninformers/kubeapplier"
-	sharedleaderelection "github.com/Azure/ARO-HCP/internal/leaderelection"
 	"github.com/Azure/ARO-HCP/internal/ocm"
 	"github.com/Azure/ARO-HCP/internal/utils"
 )
@@ -366,8 +366,6 @@ func shutdownHTTPServer(ctx context.Context, server *http.Server, name string) e
 // runBackendControllersUnderLeaderElection runs the backen controllers under
 // a leader election loop.
 func (b *Backend) runBackendControllersUnderLeaderElection(ctx context.Context, electionChecker *leaderelection.HealthzAdaptor) error {
-	logger := utils.LoggerFromContext(ctx)
-
 	backendInformers := informers.NewBackendInformers(ctx,
 		b.options.ResourcesDBClient.ResourcesGlobalListers(),
 		b.options.BillingDBClient.BillingGlobalListers(),
@@ -419,6 +417,9 @@ func (b *Backend) runBackendControllersUnderLeaderElection(ctx context.Context, 
 		"ExternalAuthMetrics", externalAuthInformer, externalAuthHandler)
 
 	_, controllerLister := backendInformers.Controllers()
+
+	maestroMetrics := maestro.NewMaestroMetrics(b.options.MetricsRegisterer)
+	maestroClientBuilder := maestro.NewMaestroClientBuilder(maestroMetrics)
 
 	subscriptionNonClusterDataDumpController := datadumpcontrollers.NewSubscriptionNonClusterDataDumpController(b.options.ResourcesDBClient, activeOperationLister, backendInformers)
 	clusterRecursiveDataDumpController := datadumpcontrollers.NewClusterRecursiveDataDumpController(b.options.ResourcesDBClient, b.options.KubeApplierDBClients, managementClusterLister, activeOperationLister, backendInformers, unionKubeApplierInformers)
@@ -545,7 +546,6 @@ func (b *Backend) runBackendControllersUnderLeaderElection(ctx context.Context, 
 		unionReadDesireLister,
 	)
 	controlPlaneDesiredVersionController := upgradecontrollers.NewControlPlaneDesiredVersionController(
-		b.clock,
 		b.options.ResourcesDBClient,
 		b.options.ClustersServiceClient,
 		activeOperationLister,
@@ -555,7 +555,6 @@ func (b *Backend) runBackendControllersUnderLeaderElection(ctx context.Context, 
 		subscriptionLister,
 	)
 	triggerControlPlaneUpgradeController := upgradecontrollers.NewTriggerControlPlaneUpgradeController(
-		b.clock,
 		b.options.ResourcesDBClient,
 		b.options.ClustersServiceClient,
 		activeOperationLister,
@@ -577,13 +576,6 @@ func (b *Backend) runBackendControllersUnderLeaderElection(ctx context.Context, 
 		unionReadDesireLister,
 	)
 	identityMigrationController := clusterpropertiescontroller.NewIdentityMigrationController(
-		b.options.ResourcesDBClient,
-		b.options.ClustersServiceClient,
-		activeOperationLister,
-		backendInformers,
-		unionKubeApplierInformers,
-	)
-	desiredControlPlaneSizeController := clusterpropertiescontroller.NewDesiredControlPlaneSizeController(
 		b.options.ResourcesDBClient,
 		b.options.ClustersServiceClient,
 		activeOperationLister,
@@ -636,6 +628,22 @@ func (b *Backend) runBackendControllersUnderLeaderElection(ctx context.Context, 
 		b.options.KubeApplierDBClients,
 		backendInformers,
 		5*time.Minute,
+	)
+
+	maestroDeleteOrphanedReadonlyBundlesController := controllers.NewDeleteOrphanedMaestroReadonlyBundlesController(
+		b.options.ResourcesDBClient,
+		b.options.ClustersServiceClient,
+		maestroClientBuilder,
+		b.options.MaestroSourceEnvironmentIdentifier,
+	)
+	// Migration controller: drains the MaestroReadonlyBundles field on
+	// every ServiceProvider*. Retire once telemetry shows no SPC/SPNP
+	// still has the field populated.
+	cleanupLegacyMaestroReadonlyBundlesController := controllers.NewCleanupLegacyMaestroReadonlyBundlesController(
+		b.options.ResourcesDBClient,
+		managementClusterLister,
+		maestroClientBuilder,
+		b.options.MaestroSourceEnvironmentIdentifier,
 	)
 
 	cleanOrphanedClusterManagedResourceGroupController := controllers.NewCleanOrphanedClusterManagedResourceGroupController(
@@ -784,11 +792,11 @@ func (b *Backend) runBackendControllersUnderLeaderElection(ctx context.Context, 
 		backendInformers,
 	)
 
-	leaderElectionConfig := leaderelection.LeaderElectionConfig{
+	le, err := leaderelection.NewLeaderElector(leaderelection.LeaderElectionConfig{
 		Lock:          b.options.LeaderElectionLock,
-		LeaseDuration: sharedleaderelection.RecommendedLeaseDuration,
-		RenewDeadline: sharedleaderelection.RecommendedRenewDeadline,
-		RetryPeriod:   sharedleaderelection.RecommendedRetryPeriod,
+		LeaseDuration: leaderElectionLeaseDuration,
+		RenewDeadline: leaderElectionRenewDeadline,
+		RetryPeriod:   leaderElectionRetryPeriod,
 		Callbacks: leaderelection.LeaderCallbacks{
 			OnStartedLeading: func(ctx context.Context) {
 				// start the SharedInformers
@@ -838,7 +846,6 @@ func (b *Backend) runBackendControllersUnderLeaderElection(ctx context.Context, 
 				go clusterDegradedAggregatorController.Run(ctx, 20)
 				go nodePoolDegradedAggregatorController.Run(ctx, 20)
 				go externalAuthDegradedAggregatorController.Run(ctx, 20)
-				go desiredControlPlaneSizeController.Run(ctx, 20)
 				go azureRPRegistrationValidationController.Run(ctx, 20)
 				go azureClusterResourceGroupExistenceValidationController.Run(ctx, 20)
 				go azureClusterManagedIdentitiesExistenceValidationController.Run(ctx, 20)
@@ -846,6 +853,8 @@ func (b *Backend) runBackendControllersUnderLeaderElection(ctx context.Context, 
 				go nodePoolActiveVersionController.Run(ctx, 20)
 				go createClusterScopedReadDesiresController.Run(ctx, 20)
 				go createNodePoolScopedReadDesiresController.Run(ctx, 20)
+				go maestroDeleteOrphanedReadonlyBundlesController.Run(ctx, 20)
+				go cleanupLegacyMaestroReadonlyBundlesController.Run(ctx, 1)
 				go cleanOrphanedClusterManagedResourceGroupController.Run(ctx, 20)
 				go triggerNodePoolUpgradeController.Run(ctx, 20)
 				go nodePoolDeletionClusterServiceDeleteDispatchController.Run(ctx, 20)
@@ -875,11 +884,7 @@ func (b *Backend) runBackendControllersUnderLeaderElection(ctx context.Context, 
 		ReleaseOnCancel: true,
 		WatchDog:        electionChecker,
 		Name:            leaderElectionLockName,
-	}
-
-	sharedleaderelection.LogLeaseProperties(logger, leaderElectionConfig)
-
-	le, err := leaderelection.NewLeaderElector(leaderElectionConfig)
+	})
 	if err != nil {
 		return err
 	}

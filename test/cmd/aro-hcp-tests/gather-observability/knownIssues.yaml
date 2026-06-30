@@ -15,5 +15,3 @@ knownIssues:
   labels:
     cluster: ".*-mgmt-.*"
   reason: "Under investigation."
-- name: "OrphanedMRGDetected"
-  reason: "Orphaned MRG cleanup is newly deployed and expected to fire while existing orphans are processed."
