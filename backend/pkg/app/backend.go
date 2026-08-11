@@ -48,6 +48,7 @@ import (
 	clusterupdate "github.com/Azure/ARO-HCP/backend/pkg/controllers/cluster/update"
 	clustervalidation "github.com/Azure/ARO-HCP/backend/pkg/controllers/cluster/validation"
 	clusterversion "github.com/Azure/ARO-HCP/backend/pkg/controllers/cluster/version"
+	"github.com/Azure/ARO-HCP/backend/pkg/controllers/fleet/cpversionrollout"
 	"github.com/Azure/ARO-HCP/backend/pkg/controllers/cosmosmigration"
 	"github.com/Azure/ARO-HCP/backend/pkg/controllers/datadump"
 	"github.com/Azure/ARO-HCP/backend/pkg/controllers/example"
@@ -600,6 +601,38 @@ func (b *Backend) runBackendControllersUnderLeaderElection(ctx context.Context, 
 		backendInformers,
 		unionKubeApplierInformers,
 	)
+
+	// Fleet control plane version rollout controllers. See
+	// docs/controllers/fleet-control-plane-version-rollout.md.
+	rolloutConfig := cpversionrollout.DefaultRolloutConfig()
+	bestVersionSelectionController := cpversionrollout.NewBestVersionSelectionController(
+		b.options.FleetDBClient,
+		fleetInformers,
+		cpversionrollout.NoopBestVersionResolver{},
+		rolloutConfig,
+	)
+	controlPlaneVersionStatusCollectorController := cpversionrollout.NewStatusCollectorController(
+		b.options.FleetDBClient,
+		fleetInformers,
+		serviceProviderClusterLister,
+		rolloutConfig,
+	)
+	normalDesiredVersionAssignmentController := cpversionrollout.NewNormalDesiredVersionAssignmentController(
+		b.options.FleetDBClient,
+		b.options.ResourcesDBClient,
+		fleetInformers,
+		serviceProviderClusterLister,
+		rolloutConfig,
+	)
+	forcedDesiredVersionAssignmentController := cpversionrollout.NewForcedDesiredVersionAssignmentController(
+		b.options.ResourcesDBClient,
+		backendInformers,
+		fleetInformers,
+	)
+	clusterServiceUpdateVersionController := cpversionrollout.NewClusterServiceUpdateController(
+		b.options.ResourcesDBClient,
+		backendInformers,
+	)
 	clusterBaseDomainPrefixSyncController := clusterproperties.NewClusterBaseDomainPrefixSyncController(
 		b.options.ResourcesDBClient,
 		b.options.ClustersServiceClient,
@@ -915,6 +948,11 @@ func (b *Backend) runBackendControllersUnderLeaderElection(ctx context.Context, 
 				go csStateDumpController.Run(ctx, 20)
 				go billingDumpController.Run(ctx, 20)
 				go managementClusterDumpController.Run(ctx, 20)
+				go bestVersionSelectionController.Run(ctx, 20)
+				go controlPlaneVersionStatusCollectorController.Run(ctx, 20)
+				go normalDesiredVersionAssignmentController.Run(ctx, 20)
+				go forcedDesiredVersionAssignmentController.Run(ctx, 20)
+				go clusterServiceUpdateVersionController.Run(ctx, 20)
 				go doNothingController.Run(ctx, 20)
 				go dispatchRequestCredentialController.Run(ctx, 20)
 				go dispatchRevokeCredentialsController.Run(ctx, 20)
