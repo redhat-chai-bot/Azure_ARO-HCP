@@ -30,3 +30,12 @@ func (mc *ManagementCluster) GetStampIdentifier() string {
 	}
 	return mc.CosmosMetadata.ResourceID.Parent.Name
 }
+
+// GetChannel returns the y-stream channel this rollout is associated with, which
+// is the top-level resource name of the ControlPlaneVersionRollout document.
+func (r *ControlPlaneVersionRollout) GetChannel() string {
+	if r.CosmosMetadata.ResourceID == nil {
+		return ""
+	}
+	return r.CosmosMetadata.ResourceID.Name
+}

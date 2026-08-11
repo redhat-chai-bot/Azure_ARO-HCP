@@ -33,6 +33,7 @@ import (
 type FleetInformers interface {
 	Stamps() (cache.SharedIndexInformer, fleetlisters.StampLister)
 	ManagementClusters() (cache.SharedIndexInformer, fleetlisters.ManagementClusterLister)
+	ControlPlaneVersionRollouts() (cache.SharedIndexInformer, fleetlisters.ControlPlaneVersionRolloutLister)
 	RunWithContext(ctx context.Context)
 }
 
@@ -41,6 +42,9 @@ type fleetInformers struct {
 	stampLister               fleetlisters.StampLister
 	managementClusterInformer cache.SharedIndexInformer
 	managementClusterLister   fleetlisters.ManagementClusterLister
+
+	controlPlaneVersionRolloutInformer cache.SharedIndexInformer
+	controlPlaneVersionRolloutLister   fleetlisters.ControlPlaneVersionRolloutLister
 }
 
 func (f *fleetInformers) Stamps() (cache.SharedIndexInformer, fleetlisters.StampLister) {
@@ -51,6 +55,10 @@ func (f *fleetInformers) ManagementClusters() (cache.SharedIndexInformer, fleetl
 	return f.managementClusterInformer, f.managementClusterLister
 }
 
+func (f *fleetInformers) ControlPlaneVersionRollouts() (cache.SharedIndexInformer, fleetlisters.ControlPlaneVersionRolloutLister) {
+	return f.controlPlaneVersionRolloutInformer, f.controlPlaneVersionRolloutLister
+}
+
 // NewFleetInformers creates FleetInformers with default relist durations.
 func NewFleetInformers(ctx context.Context, globalListers fleetcosmosstorage.FleetGlobalListers, fleetDBClient fleetcosmosstorage.FleetDBClient) FleetInformers {
 	ret := &fleetInformers{}
@@ -58,6 +66,8 @@ func NewFleetInformers(ctx context.Context, globalListers fleetcosmosstorage.Fle
 	ret.stampLister = fleetlisters.NewStampLister(ret.stampInformer.GetIndexer())
 	ret.managementClusterInformer = NewManagementClusterInformer(globalListers.ManagementClusters(), fleetDBClient)
 	ret.managementClusterLister = fleetlisters.NewManagementClusterLister(ret.managementClusterInformer.GetIndexer())
+	ret.controlPlaneVersionRolloutInformer = NewControlPlaneVersionRolloutInformer(globalListers.ControlPlaneVersionRollouts(), fleetDBClient)
+	ret.controlPlaneVersionRolloutLister = fleetlisters.NewControlPlaneVersionRolloutLister(ret.controlPlaneVersionRolloutInformer.GetIndexer())
 
 	return ret
 }
@@ -82,6 +92,13 @@ func (f *fleetInformers) RunWithContext(ctx context.Context) {
 		defer utilruntime.HandleCrash()
 		defer wg.Done()
 		f.managementClusterInformer.RunWithContext(ctx)
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer utilruntime.HandleCrash()
+		defer wg.Done()
+		f.controlPlaneVersionRolloutInformer.RunWithContext(ctx)
 	}()
 
 	<-ctx.Done()

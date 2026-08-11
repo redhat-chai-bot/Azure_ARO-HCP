@@ -47,6 +47,28 @@ func (l *SliceStampLister) Get(ctx context.Context, stampIdentifier string) (*fl
 	return nil, cosmosstorageutils.NewNotFoundError()
 }
 
+// SliceControlPlaneVersionRolloutLister implements
+// fleetlisters.ControlPlaneVersionRolloutLister backed by a slice.
+type SliceControlPlaneVersionRolloutLister struct {
+	ControlPlaneVersionRollouts []*fleetapi.ControlPlaneVersionRollout
+}
+
+var _ fleetlisters.ControlPlaneVersionRolloutLister = &SliceControlPlaneVersionRolloutLister{}
+
+func (l *SliceControlPlaneVersionRolloutLister) List(ctx context.Context) ([]*fleetapi.ControlPlaneVersionRollout, error) {
+	return l.ControlPlaneVersionRollouts, nil
+}
+
+func (l *SliceControlPlaneVersionRolloutLister) Get(ctx context.Context, channel string) (*fleetapi.ControlPlaneVersionRollout, error) {
+	key := fleetapi.ToControlPlaneVersionRolloutResourceIDString(channel)
+	for _, r := range l.ControlPlaneVersionRollouts {
+		if r.CosmosMetadata.ResourceID != nil && strings.EqualFold(r.CosmosMetadata.ResourceID.String(), key) {
+			return r, nil
+		}
+	}
+	return nil, cosmosstorageutils.NewNotFoundError()
+}
+
 // SliceManagementClusterLister implements fleetlisters.ManagementClusterLister backed by a slice.
 type SliceManagementClusterLister struct {
 	ManagementClusters []*fleetapi.ManagementCluster

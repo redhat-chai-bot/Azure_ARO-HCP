@@ -101,6 +101,26 @@ type ServiceProviderClusterSpec struct {
 	// from any explicit choice; nil means no tier has been requested. Valid
 	// values are the HostedClusterControlPlaneSize* constants above.
 	DesiredHostedClusterControlPlaneSize *string `json:"desiredHostedClusterControlPlaneSize,omitempty"`
+
+	// PinnedVersion, when set, is an SRE-specified cluster-specific exact version
+	// override. The cluster stays pinned to PinnedVersion.ExactVersion until
+	// PinnedVersion.UntilExactVersion becomes available in the channel, at which
+	// point normal upgrade selection resumes. Nil means no pin is in effect.
+	// Written by: (SRE via admin API); cleared by ForcedControlPlaneDesiredVersionAssignment
+	PinnedVersion *ClusterPinnedVersion `json:"pinnedVersion,omitempty"`
+}
+
+// ClusterPinnedVersion is an SRE-specified, cluster-specific exact version
+// override with an expiry expressed as a future exact version.
+type ClusterPinnedVersion struct {
+	// ExactVersion is the exact z-stream version to pin this cluster to
+	// (format: x.y.z), regardless of its previous version.
+	ExactVersion *semver.Version `json:"exactVersion,omitempty"`
+
+	// UntilExactVersion is the future exact version at which the pin expires: once
+	// the channel's best exact version is greater than or equal to this value,
+	// normal upgrade selection may continue and the pin is cleared.
+	UntilExactVersion *semver.Version `json:"untilExactVersion,omitempty"`
 }
 
 // ServiceProviderClusterSpecVersion contains the desired version information.
