@@ -240,7 +240,7 @@ type ServiceProviderClusterStatus struct {
 	// cluster that runs in the cluster's data plane.
 	// For example, the Cluster's CustomerProperties.Platform.OperatorsAuthentication.UserAssignedIdentities.DataPlaneOperators map
 	// contains the set of required data plane operators associated to a Cluster.
-	// Written by: FetchDataPlaneOperatorsManagedIdentitiesInfoController
+	// Written by: FetchDataPlaneOperatorsManagedIdentitiesInfo
 	DataPlaneOperatorsManagedIdentities ServiceProviderClusterDataPlaneOperatorsManagedIdentities `json:"dataPlaneOperatorsManagedIdentities,omitempty"`
 }
 
@@ -254,7 +254,7 @@ type ServiceProviderClusterDataPlaneOperatorsManagedIdentities struct {
 	// identity. Which operators reference each identity is tracked on
 	// Cluster.CustomerProperties, not here. Multiple operators may share one
 	// identity entry.
-	// Written by: FetchDataPlaneOperatorsManagedIdentitiesInfoController
+	// Written by: FetchDataPlaneOperatorsManagedIdentitiesInfo
 	Identities map[string]*ServiceProviderClusterDataPlaneOperatorManagedIdentity `json:"identities,omitempty"`
 	// EarliestRecheckTime is the earliest time at which the controller should
 	// re-query Azure for ClientID/PrincipalID of Identities. Nil means recheck
@@ -266,7 +266,7 @@ type ServiceProviderClusterDataPlaneOperatorsManagedIdentities struct {
 	// dissipated. Additionally, long recheck times are recommended for resources
 	// outside of their active phases. Order of at least six hours is, with
 	// durations up to 24 hours considered normal.
-	// Written by: FetchDataPlaneOperatorsManagedIdentitiesInfoController
+	// Written by: FetchDataPlaneOperatorsManagedIdentitiesInfo
 	EarliestRecheckTime *metav1.Time `json:"earliestRecheckTime,omitempty"`
 }
 
@@ -327,11 +327,11 @@ type ServiceProviderClusterDataPlaneOperatorManagedIdentity struct {
 	// Its value comes from the Cluster's CustomerProperties.
 	ResourceID *azcorearm.ResourceID `json:"resourceID,omitempty"`
 	// ClientID is Client ID of the Azure User Assigned Managed Identity represented by ResourceID.
-	// Fetched from Azure and written here by the FetchDataPlaneOperatorsManagedIdentitiesInfoController.
-	ClientID *string `json:"clientID,omitempty"`
+	// Fetched from Azure and written here by the FetchDataPlaneOperatorsManagedIdentitiesInfo.
+	ClientID *string `json:"clientId,omitempty"`
 	// PrincipalID Principal ID of the Azure User Assigned Managed Identity represented by ResourceID.
-	// Fetched from Azure and written here by the FetchDataPlaneOperatorsManagedIdentitiesInfoController.
-	PrincipalID *string `json:"principalID,omitempty"`
+	// Fetched from Azure and written here by the FetchDataPlaneOperatorsManagedIdentitiesInfo.
+	PrincipalID *string `json:"principalId,omitempty"`
 }
 
 // ServiceProviderClusterStatusVersion contains the actual version information.

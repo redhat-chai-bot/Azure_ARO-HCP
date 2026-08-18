@@ -947,6 +947,21 @@ No Cosmos writes. Posts `NodePoolUpgradePolicy` to Cluster Service.
 | Read | Cluster Service | <ul><li>`GetCluster` -> `GetClusterServiceUserAssignedIdentities`</li></ul> |
 | **Write** | **`HCPOpenShiftCluster`** | <ul><li>**`Identity.UserAssignedIdentities`** = migrated map from CS</li></ul> |
 
+#### FetchDataPlaneOperatorsManagedIdentitiesInfo
+
+**File:** [fetch_data_plane_operators_managed_identities_info.go](../backend/pkg/controllers/cluster/identity/fetch_data_plane_operators_managed_identities_info.go)
+**Trigger:** Cluster informer, 1-minute resync
+**Gate (needsWork on ServiceProviderCluster + desired identity set derived from the Cluster):**
+- Skipped inside SyncOnce while the cluster is deleting (`ServiceProviderProperties.DeletionTimestamp != nil`).
+- `Status.DataPlaneOperatorsManagedIdentities.EarliestRecheckTime` is honored **only** while the unique data plane operator ResourceIDs stored on the ServiceProviderCluster still match the cluster's desired set. On a match with a future `EarliestRecheckTime`, work is skipped; on a mismatch, or a nil/past `EarliestRecheckTime`, Azure is queried.
+
+| | Object | Fields |
+|---|--------|--------|
+| Read | `HCPOpenShiftCluster` | <ul><li>`ServiceProviderProperties.DeletionTimestamp` (SyncOnce: skip if set)</li><li>`CustomerProperties.Platform.OperatorsAuthentication.UserAssignedIdentities.DataPlaneOperators` (desired identity ResourceIDs, deduplicated by lowercased ResourceID)</li><li>`CustomerProperties.Platform.OperatorsAuthentication.UserAssignedIdentities.ServiceManagedIdentity` (SMI used to authenticate to Azure)</li><li>`ServiceProviderProperties.ManagedIdentitiesDataPlaneIdentityURL` (MI RP dataplane URL)</li></ul> |
+| Read | `ServiceProviderCluster` | <ul><li>`Status.DataPlaneOperatorsManagedIdentities.Identities` (NeedsWork: keys compared to the desired ResourceID set)</li><li>`Status.DataPlaneOperatorsManagedIdentities.EarliestRecheckTime` (NeedsWork: honored only when identities match)</li></ul> |
+| Read | Azure (UserAssignedIdentities) | <ul><li>`Get` per unique ResourceID → `Properties.ClientID`, `Properties.PrincipalID`</li></ul> |
+| **Write** | **`ServiceProviderCluster`** | <ul><li>**`Status.DataPlaneOperatorsManagedIdentities.Identities`** = map keyed by lowercased ResourceID of {`ResourceID`, `ClientID`, `PrincipalID`}. A `ResourceNotFound` from Azure keeps the entry with nil ClientID/PrincipalID; entries no longer referenced by the cluster are pruned. On a transient Get failure the previously resolved ClientID/PrincipalID are preserved.</li><li>**`Status.DataPlaneOperatorsManagedIdentities.EarliestRecheckTime`** = now + jittered recheck interval (set only when every identity was processed without an accumulated Get error)</li></ul> |
+
 ---
 
 ### Other Controllers

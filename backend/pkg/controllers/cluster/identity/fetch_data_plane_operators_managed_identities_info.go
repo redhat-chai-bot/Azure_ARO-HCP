@@ -257,14 +257,14 @@ func (c *fetchDataPlaneOperatorsManagedIdentitiesInfoSyncer) SyncOnce(ctx contex
 
 	if !equality.Semantic.DeepEqual(replacement.Status.DataPlaneOperatorsManagedIdentities, existingServiceProviderCluster.Status.DataPlaneOperatorsManagedIdentities) {
 		_, err = c.resourcesDBClient.ServiceProviderClusters(existingCluster.ID.SubscriptionID, existingCluster.ID.ResourceGroupName, existingCluster.ID.Name).Replace(ctx, replacement, nil)
-		if cosmosstorageutils.IsPreconditionFailedError(err) {
-			// Status (including any new DataPlaneOperatorsManagedIdentitiesEarliestRecheckTime) was not written.
-			// needsWork will still see the previously persisted value.
-			return errors.Join(errs...)
-		}
 		if err != nil {
-			// Same as precondition failure: DataPlaneOperatorsManagedIdentitiesEarliestRecheckTime was not
-			// persisted, so needsWork will still see the previously persisted value.
+			// The replacement (including any new EarliestRecheckTime) was not persisted. This includes the
+			// precondition-failure case, where another writer updated the ServiceProviderCluster concurrently.
+			// We must surface the error (joined with any accumulated Get errors) rather than returning nil:
+			// returning nil would falsely report the sync as successful even though the status update did not
+			// happen. Returning the error requeues the key so the controller retries. Because the new
+			// EarliestRecheckTime was not stored, needsWork will still observe the previously persisted value
+			// (typically nil or already past, or a mismatched identity set) and query Azure again.
 			return errors.Join(append(errs, utils.TrackError(fmt.Errorf("failed to replace ServiceProviderCluster: %w", err)))...)
 		}
 	}
@@ -273,10 +273,15 @@ func (c *fetchDataPlaneOperatorsManagedIdentitiesInfoSyncer) SyncOnce(ctx contex
 }
 
 // uniqueDataPlaneOperatorResourceIDs returns the unique lowercased ResourceID
-// strings from desiredDataPlaneOperators. It returns nil if any ResourceID is nil.
+// strings from desiredDataPlaneOperators. It returns nil immediately if any
+// entry has a nil ResourceID, so callers can treat a nil result as "the desired
+// set is not fully populated" without risking a nil pointer dereference.
 func (c *fetchDataPlaneOperatorsManagedIdentitiesInfoSyncer) uniqueDataPlaneOperatorResourceIDs(desiredDataPlaneOperators map[string]*azcorearm.ResourceID) map[string]struct{} {
 	unique := make(map[string]struct{}, len(desiredDataPlaneOperators))
 	for _, resourceID := range desiredDataPlaneOperators {
+		if resourceID == nil {
+			return nil
+		}
 		unique[strings.ToLower(resourceID.String())] = struct{}{}
 	}
 	return unique
