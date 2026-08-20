@@ -317,7 +317,9 @@ func (c *ChangeFeedWatcher[InternalAPIType, InternalAPITypePointer, CosmosAPITyp
 	if err != nil {
 		retErr := utils.TrackError(err)
 		utilruntime.HandleError(retErr)
-		c.Stop()
+		// signalStop, not Stop: we are running inside Run, so waiting on
+		// c.finished here would deadlock (finished only closes after Run returns).
+		c.signalStop()
 		cancel(retErr)
 		return
 	}
@@ -360,7 +362,9 @@ func (c *ChangeFeedWatcher[InternalAPIType, InternalAPITypePointer, CosmosAPITyp
 			case <-c.done:
 			case <-ctx.Done():
 			}
-			c.Stop()
+			// signalStop, not Stop: this goroutine is one of the children Run's
+			// wg.Wait() blocks on, so waiting on c.finished here would deadlock.
+			c.signalStop()
 			return
 		}
 	}(ctx)
@@ -511,7 +515,31 @@ func (c *ChangeFeedWatcher[InternalAPIType, InternalAPITypePointer, CosmosAPITyp
 	return nil
 }
 
+// Stop signals the watcher to shut down and blocks until Run and every child
+// goroutine it spawned have fully returned — including their deferred logging.
+//
+// The client-go Reflector holds the *ChangeFeedWatcher as its watch.Interface
+// and calls Stop() from its shutdown/relist path (see reflector watch()'s
+// `defer w.Stop()`). Blocking here is what makes informer shutdown synchronous
+// with change-feed-watcher drain: the Reflector — and therefore
+// SharedIndexInformer.RunWithContext and BackendInformers.RunWithContext — will
+// not return until the watcher's goroutines have stopped logging. That matters
+// for tests whose ctx logger is bound to *testing.T: without this wait a
+// lingering deferred log fires after the test completes and the race detector
+// flags a write-after-finish on testing.common.
+//
+// Callers that run *inside* Run or one of its child goroutines must use
+// signalStop instead — waiting on c.finished from there would deadlock, since
+// finished only closes once Run returns.
 func (c *ChangeFeedWatcher[InternalAPIType, InternalAPITypePointer, CosmosAPIType]) Stop() {
+	c.signalStop()
+	<-c.finished
+}
+
+// signalStop triggers shutdown without waiting for it to complete. It is safe
+// to call from within Run or its child goroutines (unlike Stop, which blocks on
+// c.finished and would therefore deadlock those goroutines).
+func (c *ChangeFeedWatcher[InternalAPIType, InternalAPITypePointer, CosmosAPIType]) signalStop() {
 	c.stopOnce.Do(func() {
 		close(c.done)
 	})
@@ -522,8 +550,9 @@ func (c *ChangeFeedWatcher[InternalAPIType, InternalAPITypePointer, CosmosAPITyp
 }
 
 // Finished returns a channel that is closed once Run and all of its child
-// goroutines have fully exited. It is safe to call before, during, or after
-// Run, and Stop must be invoked separately to actually trigger shutdown.
+// goroutines have fully exited (including their deferred logging). It is safe to
+// call before, during, or after Run. Stop triggers shutdown and blocks on this
+// channel; signalStop triggers shutdown without waiting.
 func (c *ChangeFeedWatcher[InternalAPIType, InternalAPITypePointer, CosmosAPIType]) Finished() <-chan struct{} {
 	return c.finished
 }
