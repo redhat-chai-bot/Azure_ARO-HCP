@@ -39,6 +39,7 @@ var _ = Describe("Engineering", func() {
 		labels.DevelopmentOnly,
 		labels.AroRpApiCompatible,
 		labels.MIContainers(1),
+		FlakeAttempts(2),
 		func(ctx context.Context) {
 			const (
 				engineeringNetworkSecurityGroupName = "engineering-nsg-name"

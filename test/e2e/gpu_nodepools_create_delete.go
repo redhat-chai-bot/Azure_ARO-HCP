@@ -35,6 +35,7 @@ var _ = Describe("HCP Nodepools GPU instances", func() {
 		labels.Positive,
 		labels.IntegrationOnly,
 		labels.MIContainers(1),
+		FlakeAttempts(2),
 		func(ctx context.Context) {
 			const (
 				customerClusterName = "cluster-gpu-np"

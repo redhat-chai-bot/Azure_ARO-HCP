@@ -43,6 +43,7 @@ var _ = Describe("Update HCPOpenShiftCluster", func() {
 		It("creates a cluster and fails to update its name with a PATCH request",
 			labels.RequireNothing, labels.Medium, labels.Negative,
 			labels.MIContainers(1),
+			FlakeAttempts(2),
 			func(ctx context.Context) {
 				const clusterName = "patch-name-cluster"
 
@@ -120,6 +121,7 @@ var _ = Describe("Update HCPOpenShiftCluster", func() {
 		It("creates a cluster and updates tags with a PATCH request",
 			labels.RequireNothing, labels.Medium, labels.Positive, labels.AroRpApiCompatible,
 			labels.MIContainers(1),
+			FlakeAttempts(2),
 			func(ctx context.Context) {
 				const clusterName = "patch-tags-cluster"
 

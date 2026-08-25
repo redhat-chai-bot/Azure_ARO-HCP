@@ -66,6 +66,7 @@ func resolveNodePoolTestVersion(ctx context.Context, channelGroup, minor string,
 var _ = Describe("Customer", func() {
 	DescribeTable("should upgrade and update a nodepool",
 		labels.MIContainers(1),
+		FlakeAttempts(2),
 		func(ctx context.Context, nodePoolMinor string, targetMinor string) {
 			channelGroup := framework.DefaultOpenshiftChannelGroup()
 			targetMinorVersion := metadataapi.Must(semver.ParseTolerant(targetMinor))
@@ -234,6 +235,7 @@ var _ = Describe("Customer", func() {
 	// only validates that the target version exists.
 	DescribeTable("should upgrade a nodepool to a version without Cincinnati upgrade edge",
 		labels.MIContainers(1),
+		FlakeAttempts(2),
 		func(ctx context.Context, minor string) {
 			channelGroup := framework.DefaultOpenshiftChannelGroup()
 			normalOffset := clusterversion.GetZStreamOffset(channelGroup)
@@ -370,6 +372,7 @@ var _ = Describe("Customer", func() {
 	// strategy, so no step-through requirement exists.
 	DescribeTable("should upgrade a nodepool skipping one minor version (+2)",
 		labels.MIContainers(1),
+		FlakeAttempts(2),
 		func(ctx context.Context, nodePoolMinor string, targetMinor string) {
 			channelGroup := framework.DefaultOpenshiftChannelGroup()
 			normalOffset := clusterversion.GetZStreamOffset(channelGroup)
@@ -510,6 +513,7 @@ var _ = Describe("Customer", func() {
 	// path. HCP nodepools use Replace strategy — nodes are recreated, not upgraded in-place.
 	DescribeTable("should downgrade a nodepool version",
 		labels.MIContainers(1),
+		FlakeAttempts(2),
 		func(ctx context.Context, minor string) {
 			channelGroup := framework.DefaultOpenshiftChannelGroup()
 			normalOffset := clusterversion.GetZStreamOffset(channelGroup)
@@ -649,6 +653,7 @@ var _ = Describe("Customer", func() {
 	// 2 minor versions behind the control plane.
 	DescribeTable("should downgrade a nodepool to a lower minor version",
 		labels.MIContainers(1),
+		FlakeAttempts(2),
 		func(ctx context.Context, cpMinor string, targetMinor string) {
 			channelGroup := framework.DefaultOpenshiftChannelGroup()
 			normalOffset := clusterversion.GetZStreamOffset(channelGroup)

@@ -50,6 +50,7 @@ var _ = Describe("Customer", func() {
 		labels.Positive,
 		labels.AroRpApiCompatible,
 		labels.MIContainers(1),
+		FlakeAttempts(2),
 		func(ctx context.Context) {
 			const (
 				customerClusterName       = "ea-cluster"

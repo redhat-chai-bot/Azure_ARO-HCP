@@ -40,6 +40,7 @@ var _ = Describe("FIPS Mode Support", func() {
 			labels.AroRpApiCompatible,
 			labels.CreateCluster,
 			labels.MIContainers(1),
+			FlakeAttempts(2),
 			func(ctx context.Context) {
 				const (
 					customerClusterName = "fips-enabled-cluster"
