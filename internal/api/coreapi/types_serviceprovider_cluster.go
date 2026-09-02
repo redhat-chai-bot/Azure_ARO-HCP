@@ -407,6 +407,46 @@ type AzureResources struct {
 	// for the cluster's control-plane and data-plane managed identities.
 	// Written by: ObserveRoleAssignments
 	RoleAssignments AzureMultiReference `json:"roleAssignments,omitempty"`
+	// DataPlaneIdentitiesFederatedCredentials tracks the federated identity credentials
+	// created for each data plane operator's managed identity, enabling OIDC workload
+	// identity federation so data plane operators can authenticate to Azure using
+	// Kubernetes service account tokens.
+	// Written by: DataPlaneIdentitiesFederation
+	DataPlaneIdentitiesFederatedCredentials DataPlaneIdentitiesFederatedCredentials `json:"dataPlaneIdentitiesFederatedCredentials,omitempty"`
+}
+
+// DataPlaneIdentitiesFederatedCredentials tracks all federated identity credentials
+// for data plane operators on a cluster.
+type DataPlaneIdentitiesFederatedCredentials struct {
+	// Operators is a map from operator name (string form of ClusterOperatorIdentifier)
+	// to the set of federated identity credentials for that operator.
+	// Written by: DataPlaneIdentitiesFederation
+	Operators map[string]*DataPlaneOperatorFederatedCredentials `json:"operators,omitempty"`
+}
+
+// DataPlaneOperatorFederatedCredentials tracks the federated identity credentials
+// for a single data plane operator.
+type DataPlaneOperatorFederatedCredentials struct {
+	// ServiceAccounts is a map from the OIDC subject
+	// (e.g. "system:serviceaccount:<namespace>:<name>") to the FIC tracking state.
+	// Written by: DataPlaneIdentitiesFederation
+	ServiceAccounts map[string]*FederatedIdentityCredentialReference `json:"serviceAccounts,omitempty"`
+}
+
+// FederatedIdentityCredentialReference tracks a single federated identity credential
+// through its creation lifecycle.
+// +k8s:deepcopy-gen=true
+type FederatedIdentityCredentialReference struct {
+	// FICName is the deterministic name assigned to the federated identity credential in Azure.
+	// Written by: DataPlaneIdentitiesFederation
+	FICName string `json:"ficName,omitempty"`
+	// Pending is true when the FIC has been requested but not yet confirmed to exist in Azure
+	// with the correct properties.
+	// Written by: DataPlaneIdentitiesFederation
+	Pending bool `json:"pending,omitempty"`
+	// Confirmed is true when the FIC has been confirmed to exist in Azure with the correct properties.
+	// Written by: DataPlaneIdentitiesFederation
+	Confirmed bool `json:"confirmed,omitempty"`
 }
 
 // AzureMultiReference tracks a set of Azure resources through their creation lifecycle.
