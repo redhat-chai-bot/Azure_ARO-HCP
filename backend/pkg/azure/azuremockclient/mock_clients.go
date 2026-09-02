@@ -128,7 +128,3 @@ func (m *FirstPartyApplicationClientBuilderFunc) DenyAssignmentsClient(tenantID 
 func (m *FirstPartyApplicationClientBuilderFunc) RoleAssignmentsClient(tenantID string, subscriptionID string) (azureclient.RoleAssignmentsClient, error) {
 	return nil, fmt.Errorf("not implemented")
 }
-
-func (m *FirstPartyApplicationClientBuilderFunc) FederatedIdentityCredentialsClient(tenantID string, subscriptionID string) (azureclient.FederatedIdentityCredentialsClient, error) {
-	return nil, fmt.Errorf("not implemented")
-}

@@ -116,45 +116,6 @@ func (c *MockFirstPartyApplicationClientBuilderDenyAssignmentsClientCall) DoAndR
 	return c
 }
 
-// FederatedIdentityCredentialsClient mocks base method.
-func (m *MockFirstPartyApplicationClientBuilder) FederatedIdentityCredentialsClient(tenantID, subscriptionID string) (FederatedIdentityCredentialsClient, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FederatedIdentityCredentialsClient", tenantID, subscriptionID)
-	ret0, _ := ret[0].(FederatedIdentityCredentialsClient)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// FederatedIdentityCredentialsClient indicates an expected call of FederatedIdentityCredentialsClient.
-func (mr *MockFirstPartyApplicationClientBuilderMockRecorder) FederatedIdentityCredentialsClient(tenantID, subscriptionID any) *MockFirstPartyApplicationClientBuilderFederatedIdentityCredentialsClientCall {
-	mr.mock.ctrl.T.Helper()
-	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FederatedIdentityCredentialsClient", reflect.TypeOf((*MockFirstPartyApplicationClientBuilder)(nil).FederatedIdentityCredentialsClient), tenantID, subscriptionID)
-	return &MockFirstPartyApplicationClientBuilderFederatedIdentityCredentialsClientCall{Call: call}
-}
-
-// MockFirstPartyApplicationClientBuilderFederatedIdentityCredentialsClientCall wrap *gomock.Call
-type MockFirstPartyApplicationClientBuilderFederatedIdentityCredentialsClientCall struct {
-	*gomock.Call
-}
-
-// Return rewrite *gomock.Call.Return
-func (c *MockFirstPartyApplicationClientBuilderFederatedIdentityCredentialsClientCall) Return(arg0 FederatedIdentityCredentialsClient, arg1 error) *MockFirstPartyApplicationClientBuilderFederatedIdentityCredentialsClientCall {
-	c.Call = c.Call.Return(arg0, arg1)
-	return c
-}
-
-// Do rewrite *gomock.Call.Do
-func (c *MockFirstPartyApplicationClientBuilderFederatedIdentityCredentialsClientCall) Do(f func(string, string) (FederatedIdentityCredentialsClient, error)) *MockFirstPartyApplicationClientBuilderFederatedIdentityCredentialsClientCall {
-	c.Call = c.Call.Do(f)
-	return c
-}
-
-// DoAndReturn rewrite *gomock.Call.DoAndReturn
-func (c *MockFirstPartyApplicationClientBuilderFederatedIdentityCredentialsClientCall) DoAndReturn(f func(string, string) (FederatedIdentityCredentialsClient, error)) *MockFirstPartyApplicationClientBuilderFederatedIdentityCredentialsClientCall {
-	c.Call = c.Call.DoAndReturn(f)
-	return c
-}
-
 // GenericResourcesClient mocks base method.
 func (m *MockFirstPartyApplicationClientBuilder) GenericResourcesClient(tenantID, subscriptionID string) (GenericResourcesClient, error) {
 	m.ctrl.T.Helper()

@@ -418,19 +418,21 @@ type AzureResources struct {
 // DataPlaneIdentitiesFederatedCredentials tracks all federated identity credentials
 // for data plane operators on a cluster.
 type DataPlaneIdentitiesFederatedCredentials struct {
-	// Operators is a map from operator name (string form of ClusterOperatorIdentifier)
-	// to the set of federated identity credentials for that operator.
+	// Identities is a map from the fully lowercased Azure Resource ID of a
+	// managed identity to the set of federated identity credentials for that
+	// identity. Keyed by resource ID (not operator name) so that identity
+	// replacement can track both old and new MIs simultaneously.
 	// Written by: DataPlaneIdentitiesFederation
-	Operators map[string]*DataPlaneOperatorFederatedCredentials `json:"operators,omitempty"`
+	Identities map[string]*ManagedIdentityFederatedCredentials `json:"identities,omitempty"`
 }
 
-// DataPlaneOperatorFederatedCredentials tracks the federated identity credentials
-// for a single data plane operator.
-type DataPlaneOperatorFederatedCredentials struct {
-	// ServiceAccounts is a map from the OIDC subject
+// ManagedIdentityFederatedCredentials tracks the federated identity credentials
+// for a single managed identity.
+type ManagedIdentityFederatedCredentials struct {
+	// Credentials is a map from the OIDC subject
 	// (e.g. "system:serviceaccount:<namespace>:<name>") to the FIC tracking state.
 	// Written by: DataPlaneIdentitiesFederation
-	ServiceAccounts map[string]*FederatedIdentityCredentialReference `json:"serviceAccounts,omitempty"`
+	Credentials map[string]*FederatedIdentityCredentialReference `json:"credentials,omitempty"`
 }
 
 // FederatedIdentityCredentialReference tracks a single federated identity credential

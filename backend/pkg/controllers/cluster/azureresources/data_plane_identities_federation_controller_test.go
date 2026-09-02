@@ -29,7 +29,6 @@ import (
 	"go.uber.org/mock/gomock"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	azcorearm "github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
@@ -48,14 +47,14 @@ import (
 )
 
 const (
-	testFICSubscriptionID    = "00000000-0000-0000-0000-000000000001"
-	testFICResourceGroupName = "test-rg"
-	testFICClusterName       = "test-cluster"
-	testFICTenantID          = "test-tenant-id"
-	testFICIssuerURL         = "https://oidc.example.com/cluster123"
-	testFICOperatorName      = "disk-csi-driver"
-	testFICSANamespace       = "openshift-cluster-csi-drivers"
-	testFICSAName            = "azure-disk-csi-driver-controller-sa"
+	testFICSubscriptionID      = "00000000-0000-0000-0000-000000000001"
+	testFICResourceGroupName   = "test-rg"
+	testFICClusterName         = "test-cluster"
+	testFICIssuerURL           = "https://oidc.example.com/cluster123"
+	testFICOperatorName        = "disk-csi-driver"
+	testFICSANamespace         = "openshift-cluster-csi-drivers"
+	testFICSAName              = "azure-disk-csi-driver-controller-sa"
+	testFICClusterIdentityURL  = "https://mi.example.com/identity"
 )
 
 var (
@@ -64,6 +63,15 @@ var (
 			"/resourceGroups/managed-rg" +
 			"/providers/Microsoft.ManagedIdentity/userAssignedIdentities/disk-csi-driver-identity",
 	))
+
+	testFICSMIResourceID = metadataapi.Must(azcorearm.ParseResourceID(
+		"/subscriptions/" + testFICSubscriptionID +
+			"/resourceGroups/managed-rg" +
+			"/providers/Microsoft.ManagedIdentity/userAssignedIdentities/service-managed-identity",
+	))
+
+	// testFICIdentityKey is the lowercased resource ID string used as the Cosmos tracking key.
+	testFICIdentityKey = strings.ToLower(testFICIdentityResourceID.String())
 )
 
 // newTestFICCluster builds an HCPOpenShiftCluster for FIC tests.
@@ -88,7 +96,9 @@ func newTestFICCluster(deleting bool, issuerURL string, dataPlaneOperators map[s
 		},
 	}
 	cluster.ServiceProviderProperties.Platform.IssuerURL = issuerURL
+	cluster.ServiceProviderProperties.ManagedIdentitiesDataPlaneIdentityURL = testFICClusterIdentityURL
 	cluster.CustomerProperties.Platform.OperatorsAuthentication.UserAssignedIdentities.DataPlaneOperators = dataPlaneOperators
+	cluster.CustomerProperties.Platform.OperatorsAuthentication.UserAssignedIdentities.ServiceManagedIdentity = testFICSMIResourceID
 	if deleting {
 		cluster.ServiceProviderProperties.DeletionTimestamp = &metav1.Time{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
 	}
@@ -113,21 +123,6 @@ func newTestFICSPC(ficTracking coreapi.DataPlaneIdentitiesFederatedCredentials) 
 	}
 	spc.Status.AzureResources.DataPlaneIdentitiesFederatedCredentials = ficTracking
 	return spc
-}
-
-// newTestFICSubscription builds a Subscription for testing.
-func newTestFICSubscription() *coreapi.Subscription {
-	subscriptionResourceID := metadataapi.Must(azcorearm.ParseResourceID("/subscriptions/" + testFICSubscriptionID))
-	return &coreapi.Subscription{
-		CosmosMetadata: coreapi.CosmosMetadata{
-			ResourceID:   subscriptionResourceID,
-			PartitionKey: strings.ToLower(subscriptionResourceID.SubscriptionID),
-		},
-		ResourceID: subscriptionResourceID,
-		Properties: &coreapi.SubscriptionProperties{
-			TenantId: ptr.To(testFICTenantID),
-		},
-	}
 }
 
 // testClusterScopedIdentitiesConfig returns a config with one data plane operator.
@@ -263,9 +258,9 @@ func TestDataPlaneIdentitiesFederationNeedsWork(t *testing.T) {
 			deleting:  false,
 			operators: dataPlaneOperators,
 			ficTracking: coreapi.DataPlaneIdentitiesFederatedCredentials{
-				Operators: map[string]*coreapi.DataPlaneOperatorFederatedCredentials{
-					testFICOperatorName: {
-						ServiceAccounts: map[string]*coreapi.FederatedIdentityCredentialReference{
+				Identities: map[string]*coreapi.ManagedIdentityFederatedCredentials{
+					testFICIdentityKey: {
+						Credentials: map[string]*coreapi.FederatedIdentityCredentialReference{
 							expectedSubject: {
 								FICName:   expectedFICName,
 								Confirmed: true,
@@ -281,9 +276,9 @@ func TestDataPlaneIdentitiesFederationNeedsWork(t *testing.T) {
 			deleting:  false,
 			operators: dataPlaneOperators,
 			ficTracking: coreapi.DataPlaneIdentitiesFederatedCredentials{
-				Operators: map[string]*coreapi.DataPlaneOperatorFederatedCredentials{
-					testFICOperatorName: {
-						ServiceAccounts: map[string]*coreapi.FederatedIdentityCredentialReference{
+				Identities: map[string]*coreapi.ManagedIdentityFederatedCredentials{
+					testFICIdentityKey: {
+						Credentials: map[string]*coreapi.FederatedIdentityCredentialReference{
 							expectedSubject: {
 								FICName: expectedFICName,
 								Pending: true,
@@ -295,13 +290,13 @@ func TestDataPlaneIdentitiesFederationNeedsWork(t *testing.T) {
 			expect: true,
 		},
 		{
-			name:      "deleting with tracked operators, needs work",
+			name:      "deleting with tracked identities, needs work",
 			deleting:  true,
 			operators: dataPlaneOperators,
 			ficTracking: coreapi.DataPlaneIdentitiesFederatedCredentials{
-				Operators: map[string]*coreapi.DataPlaneOperatorFederatedCredentials{
-					testFICOperatorName: {
-						ServiceAccounts: map[string]*coreapi.FederatedIdentityCredentialReference{
+				Identities: map[string]*coreapi.ManagedIdentityFederatedCredentials{
+					testFICIdentityKey: {
+						Credentials: map[string]*coreapi.FederatedIdentityCredentialReference{
 							expectedSubject: {
 								FICName:   expectedFICName,
 								Confirmed: true,
@@ -313,7 +308,7 @@ func TestDataPlaneIdentitiesFederationNeedsWork(t *testing.T) {
 			expect: true,
 		},
 		{
-			name:        "deleting with no tracked operators, no work needed",
+			name:        "deleting with no tracked identities, no work needed",
 			deleting:    true,
 			operators:   dataPlaneOperators,
 			ficTracking: coreapi.DataPlaneIdentitiesFederatedCredentials{},
@@ -365,10 +360,10 @@ func TestDataPlaneIdentitiesFederationSyncOnce(t *testing.T) {
 		expectCleared     bool
 	}{
 		{
-			name:      "create FIC when it does not exist",
-			deleting:  false,
-			issuerURL: testFICIssuerURL,
-			operators: dataPlaneOperators,
+			name:        "create FIC when it does not exist",
+			deleting:    false,
+			issuerURL:   testFICIssuerURL,
+			operators:   dataPlaneOperators,
 			ficTracking: coreapi.DataPlaneIdentitiesFederatedCredentials{},
 			setupMock: func(ctrl *gomock.Controller) azureclient.FederatedIdentityCredentialsClient {
 				mock := azureclient.NewMockFederatedIdentityCredentialsClient(ctrl)
@@ -385,10 +380,10 @@ func TestDataPlaneIdentitiesFederationSyncOnce(t *testing.T) {
 			expectConfirmed: true,
 		},
 		{
-			name:      "validate existing FIC with correct properties",
-			deleting:  false,
-			issuerURL: testFICIssuerURL,
-			operators: dataPlaneOperators,
+			name:        "validate existing FIC with correct properties",
+			deleting:    false,
+			issuerURL:   testFICIssuerURL,
+			operators:   dataPlaneOperators,
 			ficTracking: coreapi.DataPlaneIdentitiesFederatedCredentials{},
 			setupMock: func(ctrl *gomock.Controller) azureclient.FederatedIdentityCredentialsClient {
 				mock := azureclient.NewMockFederatedIdentityCredentialsClient(ctrl)
@@ -401,10 +396,10 @@ func TestDataPlaneIdentitiesFederationSyncOnce(t *testing.T) {
 			expectConfirmed: true,
 		},
 		{
-			name:      "update existing FIC with wrong issuer",
-			deleting:  false,
-			issuerURL: testFICIssuerURL,
-			operators: dataPlaneOperators,
+			name:        "update existing FIC with wrong issuer",
+			deleting:    false,
+			issuerURL:   testFICIssuerURL,
+			operators:   dataPlaneOperators,
 			ficTracking: coreapi.DataPlaneIdentitiesFederatedCredentials{},
 			setupMock: func(ctrl *gomock.Controller) azureclient.FederatedIdentityCredentialsClient {
 				mock := azureclient.NewMockFederatedIdentityCredentialsClient(ctrl)
@@ -421,10 +416,10 @@ func TestDataPlaneIdentitiesFederationSyncOnce(t *testing.T) {
 			expectConfirmed: true,
 		},
 		{
-			name:      "update existing FIC with wrong subject",
-			deleting:  false,
-			issuerURL: testFICIssuerURL,
-			operators: dataPlaneOperators,
+			name:        "update existing FIC with wrong subject",
+			deleting:    false,
+			issuerURL:   testFICIssuerURL,
+			operators:   dataPlaneOperators,
 			ficTracking: coreapi.DataPlaneIdentitiesFederatedCredentials{},
 			setupMock: func(ctrl *gomock.Controller) azureclient.FederatedIdentityCredentialsClient {
 				mock := azureclient.NewMockFederatedIdentityCredentialsClient(ctrl)
@@ -441,10 +436,10 @@ func TestDataPlaneIdentitiesFederationSyncOnce(t *testing.T) {
 			expectConfirmed: true,
 		},
 		{
-			name:      "update existing FIC with wrong audience",
-			deleting:  false,
-			issuerURL: testFICIssuerURL,
-			operators: dataPlaneOperators,
+			name:        "update existing FIC with wrong audience",
+			deleting:    false,
+			issuerURL:   testFICIssuerURL,
+			operators:   dataPlaneOperators,
 			ficTracking: coreapi.DataPlaneIdentitiesFederatedCredentials{},
 			setupMock: func(ctrl *gomock.Controller) azureclient.FederatedIdentityCredentialsClient {
 				mock := azureclient.NewMockFederatedIdentityCredentialsClient(ctrl)
@@ -476,9 +471,9 @@ func TestDataPlaneIdentitiesFederationSyncOnce(t *testing.T) {
 			issuerURL: testFICIssuerURL,
 			operators: dataPlaneOperators,
 			ficTracking: coreapi.DataPlaneIdentitiesFederatedCredentials{
-				Operators: map[string]*coreapi.DataPlaneOperatorFederatedCredentials{
-					testFICOperatorName: {
-						ServiceAccounts: map[string]*coreapi.FederatedIdentityCredentialReference{
+				Identities: map[string]*coreapi.ManagedIdentityFederatedCredentials{
+					testFICIdentityKey: {
+						Credentials: map[string]*coreapi.FederatedIdentityCredentialReference{
 							expectedSubject: {
 								FICName:   expectedFICName,
 								Confirmed: true,
@@ -503,9 +498,9 @@ func TestDataPlaneIdentitiesFederationSyncOnce(t *testing.T) {
 			issuerURL: testFICIssuerURL,
 			operators: dataPlaneOperators,
 			ficTracking: coreapi.DataPlaneIdentitiesFederatedCredentials{
-				Operators: map[string]*coreapi.DataPlaneOperatorFederatedCredentials{
-					testFICOperatorName: {
-						ServiceAccounts: map[string]*coreapi.FederatedIdentityCredentialReference{
+				Identities: map[string]*coreapi.ManagedIdentityFederatedCredentials{
+					testFICIdentityKey: {
+						Credentials: map[string]*coreapi.FederatedIdentityCredentialReference{
 							expectedSubject: {
 								FICName:   expectedFICName,
 								Confirmed: true,
@@ -530,9 +525,9 @@ func TestDataPlaneIdentitiesFederationSyncOnce(t *testing.T) {
 			issuerURL: testFICIssuerURL,
 			operators: dataPlaneOperators,
 			ficTracking: coreapi.DataPlaneIdentitiesFederatedCredentials{
-				Operators: map[string]*coreapi.DataPlaneOperatorFederatedCredentials{
-					testFICOperatorName: {
-						ServiceAccounts: map[string]*coreapi.FederatedIdentityCredentialReference{
+				Identities: map[string]*coreapi.ManagedIdentityFederatedCredentials{
+					testFICIdentityKey: {
+						Credentials: map[string]*coreapi.FederatedIdentityCredentialReference{
 							expectedSubject: {
 								FICName:   expectedFICName,
 								Confirmed: true,
@@ -563,12 +558,12 @@ func TestDataPlaneIdentitiesFederationSyncOnce(t *testing.T) {
 
 			ctrl := gomock.NewController(t)
 
-			fpaClientBuilder := azureclient.NewMockFirstPartyApplicationClientBuilder(ctrl)
+			smiClientBuilder := azureclient.NewMockServiceManagedIdentityClientBuilder(ctrl)
 
 			if tc.setupMock != nil {
 				mockFICClient := tc.setupMock(ctrl)
-				fpaClientBuilder.EXPECT().
-					FederatedIdentityCredentialsClient(testFICTenantID, testFICSubscriptionID).
+				smiClientBuilder.EXPECT().
+					FederatedIdentityCredentialsClient(gomock.Any(), testFICClusterIdentityURL, testFICSMIResourceID, testFICSubscriptionID).
 					Return(mockFICClient, nil).
 					AnyTimes()
 			}
@@ -577,8 +572,7 @@ func TestDataPlaneIdentitiesFederationSyncOnce(t *testing.T) {
 				resourcesDBClient:             mockResourcesDB,
 				clusterLister:                 &corelistertesting.DBClusterLister{ResourcesDBClient: mockResourcesDB},
 				serviceProviderClusterLister:  &corelistertesting.DBServiceProviderClusterLister{ResourcesDBClient: mockResourcesDB},
-				subscriptionLister:            &corelistertesting.SliceSubscriptionLister{Subscriptions: []*coreapi.Subscription{newTestFICSubscription()}},
-				azureFPAClientBuilder:         fpaClientBuilder,
+				azureSMIClientBuilder:         smiClientBuilder,
 				clusterScopedIdentitiesConfig: testClusterScopedIdentitiesConfig(),
 			}
 
@@ -604,17 +598,17 @@ func TestDataPlaneIdentitiesFederationSyncOnce(t *testing.T) {
 			gotFICTracking := updated.Status.AzureResources.DataPlaneIdentitiesFederatedCredentials
 
 			if tc.expectCleared {
-				assert.Empty(t, gotFICTracking.Operators, "FIC tracking should be cleared after deletion")
+				assert.Empty(t, gotFICTracking.Identities, "FIC tracking should be cleared after deletion")
 				return
 			}
 
 			if tc.expectConfirmed {
-				require.NotNil(t, gotFICTracking.Operators, "operators tracking should not be nil")
-				operatorTracking, ok := gotFICTracking.Operators[testFICOperatorName]
-				require.True(t, ok, "operator tracking should exist for %s", testFICOperatorName)
+				require.NotNil(t, gotFICTracking.Identities, "identities tracking should not be nil")
+				identityTracking, ok := gotFICTracking.Identities[testFICIdentityKey]
+				require.True(t, ok, "identity tracking should exist for %s", testFICIdentityKey)
 
-				saRef, ok := operatorTracking.ServiceAccounts[expectedSubject]
-				require.True(t, ok, "service account reference should exist for subject %s", expectedSubject)
+				saRef, ok := identityTracking.Credentials[expectedSubject]
+				require.True(t, ok, "credential reference should exist for subject %s", expectedSubject)
 				assert.True(t, saRef.Confirmed, "FIC should be confirmed")
 				assert.False(t, saRef.Pending, "FIC should not be pending")
 				assert.Equal(t, expectedFICName, saRef.FICName, "FIC name should match")

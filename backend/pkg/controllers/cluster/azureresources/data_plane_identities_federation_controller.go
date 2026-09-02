@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	azcorearm "github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/msi/armmsi"
 
@@ -52,12 +53,14 @@ const ficAudience = "openshift"
 // for data plane operator managed identities, enabling OIDC workload identity
 // federation so data plane operators can authenticate to Azure using Kubernetes
 // service account tokens.
+//
+// It authenticates as the cluster's Service Managed Identity (via the SMI client
+// builder) to manage FICs on the data plane operator managed identities.
 type dataPlaneIdentitiesFederationSyncer struct {
 	resourcesDBClient             corecosmosstorage.ResourcesDBClient
 	clusterLister                 corelisters.ClusterLister
 	serviceProviderClusterLister  corelisters.ServiceProviderClusterLister
-	subscriptionLister            corelisters.SubscriptionLister
-	azureFPAClientBuilder         azureclient.FirstPartyApplicationClientBuilder
+	azureSMIClientBuilder         azureclient.ServiceManagedIdentityClientBuilder
 	clusterScopedIdentitiesConfig *azure.ClusterScopedIdentitiesConfig
 }
 
@@ -68,8 +71,7 @@ var _ controllerutils.ClusterSyncer = (*dataPlaneIdentitiesFederationSyncer)(nil
 func NewDataPlaneIdentitiesFederationController(
 	resourcesDBClient corecosmosstorage.ResourcesDBClient,
 	serviceProviderClusterLister corelisters.ServiceProviderClusterLister,
-	subscriptionLister corelisters.SubscriptionLister,
-	azureFPAClientBuilder azureclient.FirstPartyApplicationClientBuilder,
+	azureSMIClientBuilder azureclient.ServiceManagedIdentityClientBuilder,
 	clusterScopedIdentitiesConfig *azure.ClusterScopedIdentitiesConfig,
 	informers coreinformers.BackendInformers,
 	kubeApplierInformers *unionkubeapplierinformers.UnionKubeApplierInformers,
@@ -80,8 +82,7 @@ func NewDataPlaneIdentitiesFederationController(
 		resourcesDBClient:             resourcesDBClient,
 		clusterLister:                 clusterLister,
 		serviceProviderClusterLister:  serviceProviderClusterLister,
-		subscriptionLister:            subscriptionLister,
-		azureFPAClientBuilder:         azureFPAClientBuilder,
+		azureSMIClientBuilder:         azureSMIClientBuilder,
 		clusterScopedIdentitiesConfig: clusterScopedIdentitiesConfig,
 	}
 
@@ -105,34 +106,28 @@ func (c *dataPlaneIdentitiesFederationSyncer) NeedsWork(cluster *coreapi.HCPOpen
 	ficTracking := serviceProviderCluster.Status.AzureResources.DataPlaneIdentitiesFederatedCredentials
 
 	if cluster.ServiceProviderProperties.DeletionTimestamp != nil {
-		// During deletion, we have work if any operators are still tracked.
-		return len(ficTracking.Operators) > 0
+		// During deletion, we have work if any identities are still tracked.
+		return len(ficTracking.Identities) > 0
 	}
 
-	// During creation/reconciliation, we have work if:
-	// 1. There are no tracked operators yet (need to create FICs)
-	// 2. Any tracked FIC is still pending (not yet confirmed)
+	// Build the desired set of (resourceID -> subjects) and check each is confirmed.
 	dataPlaneOperators := cluster.CustomerProperties.Platform.OperatorsAuthentication.UserAssignedIdentities.DataPlaneOperators
 	if len(dataPlaneOperators) == 0 {
 		return false
 	}
 
-	if len(ficTracking.Operators) == 0 {
-		return true
+	desiredEntries := c.buildDesiredFICEntries(dataPlaneOperators)
+	if len(desiredEntries) == 0 {
+		return false
 	}
 
-	for operatorName := range dataPlaneOperators {
-		operatorConfig, ok := c.clusterScopedIdentitiesConfig.DataPlaneOperatorsIdentities[azure.ClusterOperatorIdentifier(operatorName)]
-		if !ok {
-			continue
-		}
-		operatorTracking, ok := ficTracking.Operators[operatorName]
+	for resourceIDKey, subjects := range desiredEntries {
+		identityTracking, ok := ficTracking.Identities[resourceIDKey]
 		if !ok {
 			return true
 		}
-		for _, sa := range operatorConfig.KubernetesServiceAccounts {
-			subject := sa.AsOIDCSubject()
-			ref, ok := operatorTracking.ServiceAccounts[subject]
+		for _, subject := range subjects {
+			ref, ok := identityTracking.Credentials[subject.oidcSubject]
 			if !ok || !ref.Confirmed {
 				return true
 			}
@@ -140,6 +135,39 @@ func (c *dataPlaneIdentitiesFederationSyncer) NeedsWork(cluster *coreapi.HCPOpen
 	}
 
 	return false
+}
+
+// ficSubjectEntry describes one FIC to create/validate for a given identity.
+type ficSubjectEntry struct {
+	operatorName string
+	oidcSubject  string
+	saNamespace  string
+	saName       string
+}
+
+// buildDesiredFICEntries builds the desired set of FICs keyed by lowercased
+// resourceID string. Multiple operators may share an identity.
+func (c *dataPlaneIdentitiesFederationSyncer) buildDesiredFICEntries(dataPlaneOperators map[string]*azcorearm.ResourceID) map[string][]ficSubjectEntry {
+	desired := make(map[string][]ficSubjectEntry)
+	for operatorName, identityResourceID := range dataPlaneOperators {
+		if identityResourceID == nil {
+			continue
+		}
+		operatorConfig, ok := c.clusterScopedIdentitiesConfig.DataPlaneOperatorsIdentities[azure.ClusterOperatorIdentifier(operatorName)]
+		if !ok {
+			continue
+		}
+		resourceIDKey := strings.ToLower(identityResourceID.String())
+		for _, sa := range operatorConfig.KubernetesServiceAccounts {
+			desired[resourceIDKey] = append(desired[resourceIDKey], ficSubjectEntry{
+				operatorName: operatorName,
+				oidcSubject:  sa.AsOIDCSubject(),
+				saNamespace:  sa.Namespace,
+				saName:       sa.Name,
+			})
+		}
+	}
+	return desired
 }
 
 // SyncOnce reads the cluster and ServiceProviderCluster from the informer caches,
@@ -187,52 +215,53 @@ func (c *dataPlaneIdentitiesFederationSyncer) reconcileDataPlaneIdentitiesFedera
 		return utils.TrackError(fmt.Errorf("issuer URL is empty for cluster %q", cluster.ID.String()))
 	}
 
-	ficClient, err := c.federatedIdentityCredentialsClient(ctx, cluster.ID.SubscriptionID)
+	smiResourceID := cluster.CustomerProperties.Platform.OperatorsAuthentication.UserAssignedIdentities.ServiceManagedIdentity
+	if smiResourceID == nil {
+		return utils.TrackError(fmt.Errorf("cluster ServiceManagedIdentity is nil; cannot manage FICs"))
+	}
+
+	clusterIdentityURL := cluster.ServiceProviderProperties.ManagedIdentitiesDataPlaneIdentityURL
+	ficClient, err := c.azureSMIClientBuilder.FederatedIdentityCredentialsClient(ctx, clusterIdentityURL, smiResourceID, cluster.ID.SubscriptionID)
 	if err != nil {
-		return utils.TrackError(err)
+		return utils.TrackError(fmt.Errorf("failed to build FIC client: %w", err))
 	}
 
 	replacement := existingServiceProviderCluster.DeepCopy()
-	if replacement.Status.AzureResources.DataPlaneIdentitiesFederatedCredentials.Operators == nil {
-		replacement.Status.AzureResources.DataPlaneIdentitiesFederatedCredentials.Operators = make(map[string]*coreapi.DataPlaneOperatorFederatedCredentials)
+	if replacement.Status.AzureResources.DataPlaneIdentitiesFederatedCredentials.Identities == nil {
+		replacement.Status.AzureResources.DataPlaneIdentitiesFederatedCredentials.Identities = make(map[string]*coreapi.ManagedIdentityFederatedCredentials)
 	}
 
-	for operatorName, identityResourceID := range dataPlaneOperators {
-		if identityResourceID == nil {
-			continue
+	desiredEntries := c.buildDesiredFICEntries(dataPlaneOperators)
+
+	for resourceIDKey, subjects := range desiredEntries {
+		identityResourceID, err := azcorearm.ParseResourceID(resourceIDKey)
+		if err != nil {
+			return utils.TrackError(fmt.Errorf("failed to parse identity resource ID %q: %w", resourceIDKey, err))
 		}
 
-		operatorConfig, ok := c.clusterScopedIdentitiesConfig.DataPlaneOperatorsIdentities[azure.ClusterOperatorIdentifier(operatorName)]
-		if !ok {
-			logger.Info("skipping unknown data plane operator", "operator", operatorName)
-			continue
-		}
-
-		if _, ok := replacement.Status.AzureResources.DataPlaneIdentitiesFederatedCredentials.Operators[operatorName]; !ok {
-			replacement.Status.AzureResources.DataPlaneIdentitiesFederatedCredentials.Operators[operatorName] = &coreapi.DataPlaneOperatorFederatedCredentials{
-				ServiceAccounts: make(map[string]*coreapi.FederatedIdentityCredentialReference),
+		if _, ok := replacement.Status.AzureResources.DataPlaneIdentitiesFederatedCredentials.Identities[resourceIDKey]; !ok {
+			replacement.Status.AzureResources.DataPlaneIdentitiesFederatedCredentials.Identities[resourceIDKey] = &coreapi.ManagedIdentityFederatedCredentials{
+				Credentials: make(map[string]*coreapi.FederatedIdentityCredentialReference),
 			}
 		}
-		operatorTracking := replacement.Status.AzureResources.DataPlaneIdentitiesFederatedCredentials.Operators[operatorName]
+		identityTracking := replacement.Status.AzureResources.DataPlaneIdentitiesFederatedCredentials.Identities[resourceIDKey]
 
-		for _, sa := range operatorConfig.KubernetesServiceAccounts {
-			subject := sa.AsOIDCSubject()
-			ficName := GenerateFICName(cluster.ID.Name, operatorName, sa.Namespace, sa.Name)
+		rgName := identityResourceID.ResourceGroupName
+		miName := identityResourceID.Name
+
+		for _, entry := range subjects {
+			ficName := GenerateFICName(cluster.ID.Name, entry.operatorName, entry.saNamespace, entry.saName)
 
 			// Check if already confirmed.
-			if ref, ok := operatorTracking.ServiceAccounts[subject]; ok && ref.Confirmed {
+			if ref, ok := identityTracking.Credentials[entry.oidcSubject]; ok && ref.Confirmed {
 				continue
 			}
 
 			// Mark as pending before checking Azure.
-			operatorTracking.ServiceAccounts[subject] = &coreapi.FederatedIdentityCredentialReference{
+			identityTracking.Credentials[entry.oidcSubject] = &coreapi.FederatedIdentityCredentialReference{
 				FICName: ficName,
 				Pending: true,
 			}
-
-			// Try to get the existing FIC.
-			rgName := identityResourceID.ResourceGroupName
-			miName := identityResourceID.Name
 
 			getResp, getErr := ficClient.Get(ctx, rgName, miName, ficName, nil)
 			if getErr != nil {
@@ -240,33 +269,33 @@ func (c *dataPlaneIdentitiesFederationSyncer) reconcileDataPlaneIdentitiesFedera
 				if errors.As(getErr, &azErr) && azErr.StatusCode == 404 {
 					// FIC does not exist yet, create it.
 					logger.Info("creating federated identity credential",
-						"operator", operatorName, "ficName", ficName, "subject", subject)
+						"operator", entry.operatorName, "ficName", ficName, "subject", entry.oidcSubject)
 
 					_, createErr := ficClient.CreateOrUpdate(ctx, rgName, miName, ficName,
 						armmsi.FederatedIdentityCredential{
 							Properties: &armmsi.FederatedIdentityCredentialProperties{
 								Issuer:    to.Ptr(issuerURL),
-								Subject:   to.Ptr(subject),
+								Subject:   to.Ptr(entry.oidcSubject),
 								Audiences: []*string{to.Ptr(ficAudience)},
 							},
 						}, nil)
 					if createErr != nil {
-						return utils.TrackError(fmt.Errorf("failed to create FIC %q for operator %q: %w", ficName, operatorName, createErr))
+						return utils.TrackError(fmt.Errorf("failed to create FIC %q for operator %q: %w", ficName, entry.operatorName, createErr))
 					}
 
-					operatorTracking.ServiceAccounts[subject] = &coreapi.FederatedIdentityCredentialReference{
+					identityTracking.Credentials[entry.oidcSubject] = &coreapi.FederatedIdentityCredentialReference{
 						FICName:   ficName,
 						Pending:   false,
 						Confirmed: true,
 					}
 					continue
 				}
-				return utils.TrackError(fmt.Errorf("failed to get FIC %q for operator %q: %w", ficName, operatorName, getErr))
+				return utils.TrackError(fmt.Errorf("failed to get FIC %q for operator %q: %w", ficName, entry.operatorName, getErr))
 			}
 
 			// FIC exists, validate its properties.
-			if c.validateFederatedIdentityCredential(getResp.FederatedIdentityCredential, issuerURL, subject) {
-				operatorTracking.ServiceAccounts[subject] = &coreapi.FederatedIdentityCredentialReference{
+			if c.validateFederatedIdentityCredential(getResp.FederatedIdentityCredential, issuerURL, entry.oidcSubject) {
+				identityTracking.Credentials[entry.oidcSubject] = &coreapi.FederatedIdentityCredentialReference{
 					FICName:   ficName,
 					Pending:   false,
 					Confirmed: true,
@@ -274,21 +303,21 @@ func (c *dataPlaneIdentitiesFederationSyncer) reconcileDataPlaneIdentitiesFedera
 			} else {
 				// Properties mismatch, update the FIC.
 				logger.Info("updating federated identity credential with corrected properties",
-					"operator", operatorName, "ficName", ficName, "subject", subject)
+					"operator", entry.operatorName, "ficName", ficName, "subject", entry.oidcSubject)
 
 				_, updateErr := ficClient.CreateOrUpdate(ctx, rgName, miName, ficName,
 					armmsi.FederatedIdentityCredential{
 						Properties: &armmsi.FederatedIdentityCredentialProperties{
 							Issuer:    to.Ptr(issuerURL),
-							Subject:   to.Ptr(subject),
+							Subject:   to.Ptr(entry.oidcSubject),
 							Audiences: []*string{to.Ptr(ficAudience)},
 						},
 					}, nil)
 				if updateErr != nil {
-					return utils.TrackError(fmt.Errorf("failed to update FIC %q for operator %q: %w", ficName, operatorName, updateErr))
+					return utils.TrackError(fmt.Errorf("failed to update FIC %q for operator %q: %w", ficName, entry.operatorName, updateErr))
 				}
 
-				operatorTracking.ServiceAccounts[subject] = &coreapi.FederatedIdentityCredentialReference{
+				identityTracking.Credentials[entry.oidcSubject] = &coreapi.FederatedIdentityCredentialReference{
 					FICName:   ficName,
 					Pending:   false,
 					Confirmed: true,
@@ -310,10 +339,16 @@ func (c *dataPlaneIdentitiesFederationSyncer) deleteDataPlaneIdentitiesFederatio
 	logger := utils.LoggerFromContext(ctx)
 	dataPlaneOperators := cluster.CustomerProperties.Platform.OperatorsAuthentication.UserAssignedIdentities.DataPlaneOperators
 
-	ficClient, err := c.federatedIdentityCredentialsClient(ctx, cluster.ID.SubscriptionID)
+	smiResourceID := cluster.CustomerProperties.Platform.OperatorsAuthentication.UserAssignedIdentities.ServiceManagedIdentity
+	if smiResourceID == nil {
+		// Cannot build the client; clear the tracking since the cluster is being deleted.
+		return utils.TrackError(c.clearAllFICReferences(ctx, cluster, existingServiceProviderCluster))
+	}
+
+	clusterIdentityURL := cluster.ServiceProviderProperties.ManagedIdentitiesDataPlaneIdentityURL
+	ficClient, err := c.azureSMIClientBuilder.FederatedIdentityCredentialsClient(ctx, clusterIdentityURL, smiResourceID, cluster.ID.SubscriptionID)
 	if err != nil {
-		// If we cannot build the client (e.g. subscription or tenant not found),
-		// clear the tracking anyway since the cluster is being deleted.
+		// If we cannot build the client, clear the tracking anyway since the cluster is being deleted.
 		return utils.TrackError(c.clearAllFICReferences(ctx, cluster, existingServiceProviderCluster))
 	}
 
@@ -340,8 +375,6 @@ func (c *dataPlaneIdentitiesFederationSyncer) deleteDataPlaneIdentitiesFederatio
 			_, deleteErr := ficClient.Delete(ctx, rgName, miName, ficName, nil)
 			if deleteErr != nil {
 				if isDeleteNotFoundOrGone(deleteErr) {
-					// FIC already deleted, parent MI or RG gone, or
-					// authorization removed — treat as success during deletion.
 					continue
 				}
 				deleteErrors = append(deleteErrors, fmt.Errorf("failed to delete FIC %q for operator %q: %w", ficName, operatorName, deleteErr))
@@ -418,24 +451,6 @@ func (c *dataPlaneIdentitiesFederationSyncer) clearAllFICReferences(
 	return err
 }
 
-// federatedIdentityCredentialsClient builds an FPA-credentialed Azure
-// FederatedIdentityCredentials client for the given subscription.
-func (c *dataPlaneIdentitiesFederationSyncer) federatedIdentityCredentialsClient(ctx context.Context, subscriptionID string) (azureclient.FederatedIdentityCredentialsClient, error) {
-	subscription, err := c.subscriptionLister.Get(ctx, subscriptionID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get subscription %q: %w", subscriptionID, err)
-	}
-	if subscription.Properties == nil || subscription.Properties.TenantId == nil {
-		return nil, fmt.Errorf("subscription %q has no tenant ID", subscriptionID)
-	}
-
-	ficClient, err := c.azureFPAClientBuilder.FederatedIdentityCredentialsClient(*subscription.Properties.TenantId, subscriptionID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build federated identity credentials client: %w", err)
-	}
-	return ficClient, nil
-}
-
 // isDeleteNotFoundOrGone reports whether err indicates the FIC, its parent MI,
 // or the resource group no longer exists, or authorization has been removed.
 // During cluster deletion all of these are expected and treated as success.
@@ -497,4 +512,3 @@ func sanitizeForAzureName(s string) string {
 	}
 	return result
 }
-
