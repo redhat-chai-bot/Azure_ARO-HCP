@@ -17,6 +17,7 @@ package e2e
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -68,27 +69,74 @@ var _ = Describe("KSM HCP Metrics", func() {
 			endpoint, err := promutil.LookupPrometheusEndpoint(ctx, cred, subscriptionID, regionRGStr, hcpWorkspaceNameStr)
 			Expect(err).NotTo(HaveOccurred(), "failed to look up HCP Prometheus endpoint")
 
-			query := `ingresscontroller_info{hostedcontrolplane=~".+", container="kube-state-metrics"}`
+			type metricCheck struct {
+				query       string
+				description string
+			}
+
+			checks := []metricCheck{
+				{
+					query:       `ingresscontroller_info{hostedcontrolplane=~".+", container="kube-state-metrics"}`,
+					description: "ingresscontroller_info from kube-state-metrics",
+				},
+				{
+					query:       `kube_node_status_condition{hostedcontrolplane=~".+", container="kube-state-metrics"}`,
+					description: "kube_node_status_condition from kube-state-metrics",
+				},
+				{
+					query:       `kube_node_info{hostedcontrolplane=~".+", container="kube-state-metrics"}`,
+					description: "kube_node_info from kube-state-metrics",
+				},
+			}
 
 			httpClient := &http.Client{Timeout: 30 * time.Second}
 
-			By("Polling Azure Monitor for ingresscontroller_info metrics")
+			// Track which metrics have been found so we don't re-query them.
+			found := make(map[string]bool, len(checks))
+
+			By("Polling Azure Monitor for KSM HCP metrics")
 			// Azure Monitor Prometheus ingestion latency for new metric series can exceed 10 minutes.
 			Eventually(func(g Gomega) {
 				now := time.Now()
 				// Ingestion latency (noted above) can exceed 10 minutes, so a
-				// shorter lookback can miss samples that land with an older
-				// timestamp once ingestion catches up.
-				start := now.Add(-20 * time.Minute)
+				// generous lookback prevents missing samples that land with an
+				// older timestamp once ingestion catches up.
+				start := now.Add(-35 * time.Minute)
 
-				resp, err := promutil.QueryRange(ctx, httpClient, cred, endpoint, query, start, now, "60s")
-				g.Expect(err).NotTo(HaveOccurred(), "Prometheus query_range failed")
-				if err != nil {
-					return
+				var missing []string
+				for _, c := range checks {
+					if found[c.query] {
+						continue
+					}
+
+					resp, err := promutil.QueryRange(ctx, httpClient, cred, endpoint, c.query, start, now, "60s")
+					g.Expect(err).NotTo(HaveOccurred(), "Prometheus query_range failed for %s", c.description)
+					if err != nil {
+						return
+					}
+
+					if len(resp.Data.Result) > 0 {
+						found[c.query] = true
+						GinkgoLogr.Info("metric found", "metric", c.description)
+					} else {
+						missing = append(missing, c.description)
+					}
 				}
-				g.Expect(resp.Data.Result).NotTo(BeEmpty(),
-					"expected ingresscontroller_info metrics for at least one hostedcontrolplane but got no results")
-			}).WithTimeout(15*time.Minute).WithPolling(30*time.Second).WithContext(ctx).Should(Succeed(),
-				"ingresscontroller_info metrics never appeared in Azure Monitor for any hostedcontrolplane")
+
+				if len(missing) > 0 {
+					GinkgoLogr.Info("poll status",
+						"found", len(found),
+						"total", len(checks),
+						"missingMetrics", strings.Join(missing, ", "))
+				}
+
+				g.Expect(missing).To(BeEmpty(),
+					"expected %s but got no results", strings.Join(missing, "; "))
+			}).WithTimeout(25*time.Minute).WithPolling(30*time.Second).WithContext(ctx).Should(Succeed(),
+				"not all KSM metrics appeared in Azure Monitor")
+
+			for _, c := range checks {
+				GinkgoWriter.Printf("  [OK] %s\n", c.description)
+			}
 		})
 })
