@@ -36,6 +36,7 @@ import (
 	clusterplacement "github.com/Azure/ARO-HCP/backend/pkg/controllers/cluster/placement"
 	clusterproperties "github.com/Azure/ARO-HCP/backend/pkg/controllers/cluster/properties"
 	clusterreaddesires "github.com/Azure/ARO-HCP/backend/pkg/controllers/cluster/readdesires"
+	clusterresources "github.com/Azure/ARO-HCP/backend/pkg/controllers/cluster/resources"
 	clusterroleassignments "github.com/Azure/ARO-HCP/backend/pkg/controllers/cluster/roleassignments"
 	clusterstatus "github.com/Azure/ARO-HCP/backend/pkg/controllers/cluster/status"
 	clusterupdate "github.com/Azure/ARO-HCP/backend/pkg/controllers/cluster/update"
@@ -942,6 +943,25 @@ func instantiatePendingCleanupController(controllerContext controllerconfig.Cont
 	), nil
 }
 
+func registerIngressCertificateController() controllerconfig.ControllerRegistration {
+	return controllerconfig.ControllerRegistration{
+		Workers:     20,
+		Instantiate: controllerconfig.WithCacheSyncs(instantiateIngressCertificateController, true),
+	}
+}
+
+func instantiateIngressCertificateController(controllerContext controllerconfig.ControllerContext) (controllerconfig.Runnable, error) {
+	_, managementClusterLister := controllerContext.FleetInformers.ManagementClusters()
+	return clusterresources.NewIngressCertificateController(
+		controllerContext.ResourcesDBClient,
+		controllerContext.KubeApplierDBClients,
+		controllerContext.BackendInformers,
+		controllerContext.UnionKubeApplierInformers,
+		managementClusterLister,
+		controllerContext.ServiceTenantID,
+	), nil
+}
+
 func registerBackupScheduleController() controllerconfig.ControllerRegistration {
 	return controllerconfig.ControllerRegistration{
 		Workers:     20,
@@ -1205,6 +1225,7 @@ func Register(registry map[string]controllerconfig.ControllerRegistration) {
 	registry[strings.ToLower(clusterplacement.PlacementControllerName)] = registerPlacementController()
 	registry[strings.ToLower(clusterplacement.PendingCleanupControllerName)] = registerPendingCleanupController()
 	registry[strings.ToLower(clusterbackups.BackupScheduleControllerName)] = registerBackupScheduleController()
+	registry[strings.ToLower(clusterresources.IngressCertificateControllerName)] = registerIngressCertificateController()
 	registry[strings.ToLower(clusteridentity.FetchMSIIdentitiesInfoControllerName)] = registerFetchMSIIdentitiesInfoController()
 	registry[strings.ToLower(clusteridentity.FetchDataPlaneOperatorsManagedIdentitiesInfoControllerName)] = registerFetchDataPlaneOperatorsManagedIdentitiesInfoController()
 	registry[strings.ToLower(clusterroleassignments.RoleAssignmentsControllerName)] = registerIdentityRoleAssignmentsController()
