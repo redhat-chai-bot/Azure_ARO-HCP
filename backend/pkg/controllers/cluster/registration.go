@@ -31,12 +31,12 @@ import (
 	clusterdeletion "github.com/Azure/ARO-HCP/backend/pkg/controllers/cluster/deletion"
 	"github.com/Azure/ARO-HCP/backend/pkg/controllers/cluster/denyassignments"
 	clusteridentity "github.com/Azure/ARO-HCP/backend/pkg/controllers/cluster/identity"
+	clusterk8sresources "github.com/Azure/ARO-HCP/backend/pkg/controllers/cluster/k8sresources"
 	"github.com/Azure/ARO-HCP/backend/pkg/controllers/cluster/legacycredentialrequest"
 	clusteroperations "github.com/Azure/ARO-HCP/backend/pkg/controllers/cluster/operations"
 	clusterplacement "github.com/Azure/ARO-HCP/backend/pkg/controllers/cluster/placement"
 	clusterproperties "github.com/Azure/ARO-HCP/backend/pkg/controllers/cluster/properties"
 	clusterreaddesires "github.com/Azure/ARO-HCP/backend/pkg/controllers/cluster/readdesires"
-	clusterresources "github.com/Azure/ARO-HCP/backend/pkg/controllers/cluster/resources"
 	clusterroleassignments "github.com/Azure/ARO-HCP/backend/pkg/controllers/cluster/roleassignments"
 	clusterstatus "github.com/Azure/ARO-HCP/backend/pkg/controllers/cluster/status"
 	clusterupdate "github.com/Azure/ARO-HCP/backend/pkg/controllers/cluster/update"
@@ -965,7 +965,7 @@ func instantiateTLSCertificatesController(controllerContext controllerconfig.Con
 
 func instantiateIngressCertificateController(controllerContext controllerconfig.ControllerContext) (controllerconfig.Runnable, error) {
 	_, managementClusterLister := controllerContext.FleetInformers.ManagementClusters()
-	return clusterresources.NewIngressCertificateController(
+	return clusterk8sresources.NewIngressCertificateController(
 		controllerContext.ResourcesDBClient,
 		controllerContext.KubeApplierDBClients,
 		controllerContext.BackendInformers,
@@ -1238,7 +1238,7 @@ func Register(registry map[string]controllerconfig.ControllerRegistration) {
 	registry[strings.ToLower(clusterplacement.PlacementControllerName)] = registerPlacementController()
 	registry[strings.ToLower(clusterplacement.PendingCleanupControllerName)] = registerPendingCleanupController()
 	registry[strings.ToLower(clusterbackups.BackupScheduleControllerName)] = registerBackupScheduleController()
-	registry[strings.ToLower(clusterresources.IngressCertificateControllerName)] = registerIngressCertificateController()
+	registry[strings.ToLower(clusterk8sresources.IngressCertificateControllerName)] = registerIngressCertificateController()
 	registry[strings.ToLower(clusterazureresources.TLSCertificatesControllerName)] = registerTLSCertificatesController()
 	registry[strings.ToLower(clusteridentity.FetchMSIIdentitiesInfoControllerName)] = registerFetchMSIIdentitiesInfoController()
 	registry[strings.ToLower(clusteridentity.FetchDataPlaneOperatorsManagedIdentitiesInfoControllerName)] = registerFetchDataPlaneOperatorsManagedIdentitiesInfoController()
